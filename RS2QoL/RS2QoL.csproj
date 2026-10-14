@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- RomancingSaGa2: Unity 5.6.1 / Mono / x64 → net35 -->
+    <TargetFramework>net35</TargetFramework>
+    <AssemblyName>RS2QoL</AssemblyName>
+    <Description>ロマンシング サガ2 (Steam) 快適化 MOD</Description>
+    <Product>RS2QoL</Product>
+    <BepInExPluginGuid>net.my-p.rs2qol</BepInExPluginGuid>
+    <BepInExPluginName>RS2QoL</BepInExPluginName>
+    <Version>0.37.0</Version>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>RS2QoL</RootNamespace>
+    <RestoreAdditionalProjectSources>
+      https://api.nuget.org/v3/index.json;
+      https://nuget.bepinex.dev/v3/index.json
+    </RestoreAdditionalProjectSources>
+    <!-- ゲームのインストール先 (別の場所なら -p:GameDir=... で上書き可) -->
+    <GameDir Condition="'$(GameDir)' == ''">E:\SteamLibrary\steamapps\common\RomancingSaGa2</GameDir>
+    <ManagedDir>$(GameDir)\rs2_Data\Managed</ManagedDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BepInEx.Analyzers" Version="1.*" PrivateAssets="all" />
+    <PackageReference Include="BepInEx.Core" Version="5.*" />
+    <PackageReference Include="BepInEx.PluginInfoProps" Version="2.*" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.2" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- Unity とゲーム本体の DLL はゲームフォルダから直接参照する (Unity 5.6 は NuGet にモジュール版がないため) -->
+  <ItemGroup>
+    <Reference Include="UnityEngine">
+      <HintPath>$(ManagedDir)\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(ManagedDir)\UnityEngine.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(ManagedDir)\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp-firstpass">
+      <HintPath>$(ManagedDir)\Assembly-CSharp-firstpass.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- ビルド後にゲームの BepInEx/plugins へ自動コピー -->
+  <Target Name="CopyToGame" AfterTargets="Build" Condition="Exists('$(GameDir)\BepInEx\plugins')">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)\BepInEx\plugins\$(AssemblyName)" />
+    <Message Importance="high" Text="Copied $(TargetFileName) to $(GameDir)\BepInEx\plugins\$(AssemblyName)" />
+  </Target>
+
+</Project>
