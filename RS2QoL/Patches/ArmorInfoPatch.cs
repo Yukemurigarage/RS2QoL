@@ -309,6 +309,31 @@ namespace RS2QoL.Patches
         static void Postfix(string FileName) { ArmorInfo.ForgetIfScreen(FileName); }
     }
 
+    // 店の買う品物の一覧 (1_b_1_Control) と売る品物の一覧 (1_c_1_Control)。本体はこの画面に攻撃力 / 防御力を出さない
+    // (個数の画面で初めて item_power_disp が呼ばれる) ので、ShopEquipMark と同じくカーソルの品物を init_shop_* の Postfix で拾う。
+    // init_shop_* は mode 0 の間毎フレーム呼ばれるので、カーソルを動かせばその場で記録が替わる
+    [HarmonyPatch(typeof(Menu), "init_shop_kau")]
+    internal static class ArmorInfoShopBuyListPatch
+    {
+        static void Postfix(Menu __instance)
+        {
+            int idx = __instance.gene_te2 * 8;
+            if (idx < 0 || idx >= __instance.equip_work.Length) return;
+            ArmorInfo.Record(__instance.equip_work[idx], "1_b_1_Control");
+        }
+    }
+
+    [HarmonyPatch(typeof(Menu), "init_shop_uru")]
+    internal static class ArmorInfoShopSellListPatch
+    {
+        static void Postfix(Menu __instance)
+        {
+            int idx = 33 + (__instance.page_no * 4 + __instance.gene_te2) * 2;
+            if (idx < 33 || idx >= Work.partydata.Length) return;
+            ArmorInfo.Record(Work.partydata[idx], "1_c_1_Control");
+        }
+    }
+
     // 持ち物 (2_c_Control) と店 (1_b_2_Control): 品物の攻撃力 / 防御力の文字を埋める関数
     [HarmonyPatch(typeof(Menu), "item_power_disp", new Type[] { typeof(int), typeof(CSpriteStudioObject), typeof(int) })]
     internal static class ArmorInfoItemPatch

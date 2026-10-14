@@ -78,9 +78,10 @@ namespace RS2QoL
                 if (s_wallpaper != null) s_wallpaper.wrapMode = TextureWrapMode.Clamp;
                 s_wallpaperGray = LoadOwn(WallpaperGrayFile);
                 if (s_wallpaperGray != null) s_wallpaperGray.wrapMode = TextureWrapMode.Clamp;
-                // 矢印は本体と同じ Util.LoadTexture で (Steam 版は起動時に登録された L / R 文字入りが返る。共有物なので破棄しない)
-                s_arrowL = LoadShared("menu/btn/L_btn.png");
-                s_arrowR = LoadShared("menu/btn/R_btn.png");
+                // 矢印はアーカイブの文字なし (スマホ版) を自前で持つ。Util.LoadTexture だと登録表の絵 (ButtonGlyph が
+                // ArrowButtonScalePercent で縮めた絵) が返り、この MOD の窓の矢印まで小さくなるため
+                s_arrowL = LoadOwn("menu/btn/L_btn.png");
+                s_arrowR = LoadOwn("menu/btn/R_btn.png");
             }
             catch (Exception e)
             {
@@ -104,14 +105,6 @@ namespace RS2QoL
             t.name = "rs2qol_" + System.IO.Path.GetFileNameWithoutExtension(fname);
             t.hideFlags = HideFlags.HideAndDontSave;
             if (!t.LoadImage(bytes)) { UnityEngine.Object.Destroy(t); return null; }
-            return t;
-        }
-
-        private static Texture2D LoadShared(string fname)
-        {
-            Texture2D t = null;
-            try { t = Util.LoadTexture(fname); } catch { }
-            if (t == null || t.width <= 2) { Plugin.Log.LogWarning("[UiParts] not found: " + fname); return null; }
             return t;
         }
 

@@ -102,6 +102,10 @@ namespace RS2QoL
             Patches.WindowMode.Bind(Config);
             // マウスカーソルの自動非表示 ([Window] HideCursor / HideCursorSeconds)
             Patches.MouseCursor.Bind(Config);
+            // スマホ版のタッチ用ボタンの絵を消す ([Window] HideTouchButtons、既定 Off)。フィールド / メニュー / 戦闘
+            Patches.TouchButtons.Bind(Config);
+            // 所持金のクラウンの絵の大きさ ([Display] CoinIconScalePercent、既定 100)。SpriteStudio の頂点を縮める
+            Patches.CoinIcon.Bind(Config);
             // 画面の同期 ([Display] Sync / FrameRate)。VRR 向けの正確なフレームリミッタと VSync。GameMain.Start の後に適用
             Patches.DisplaySync.Bind(Config);
 

@@ -204,7 +204,35 @@ namespace RS2QoL
             AddToggle(p, "60fps 戦闘の味方・ダメージも補間", Interp60Battle.Enabled);
             AddToggle(p, "60fps ワールドマップの巻物も補間", Interp60FldAnim.Enabled);
             AddToggle(p, "マウスカーソルを自動で隠す", MouseCursor.AutoHide);
+            AddToggle(p, "スマホ版のタッチ用ボタンの絵を消す (フィールド / メニュー / 戦闘)", TouchButtons.Hide);
             AddToggle(p, "ボタンの絵から A B X の丸文字を消す (文字を中央に)", ButtonGlyph.Enabled);
+            p.Items.Add(new Item
+            {
+                Label = "ページ送りの矢印ボタンの大きさ (メニュー・店)",
+                Value = () => ButtonGlyph.ScaleLabel(ButtonGlyph.Scale),
+                Left = () => ButtonGlyph.CycleScale(-1),
+                Entry = ButtonGlyph.ArrowScale,
+                Right = () => ButtonGlyph.CycleScale(+1),
+                Activate = () => ButtonGlyph.CycleScale(+1),
+            });
+            p.Items.Add(new Item
+            {
+                Label = "所持金のクラウンの絵の大きさ (次に開いた画面から)",
+                Value = () => CoinIcon.Label(CoinIcon.Percent),
+                Left = () => CoinIcon.Cycle(-1),
+                Entry = CoinIcon.Scale,
+                Right = () => CoinIcon.Cycle(+1),
+                Activate = () => CoinIcon.Cycle(+1),
+            });
+            p.Items.Add(new Item
+            {
+                Label = "所持金のクラウンの絵を上にずらす (次に開いた画面から)",
+                Value = () => CoinIcon.UpLabel(CoinIcon.Up),
+                Left = () => CoinIcon.CycleUp(-1),
+                Entry = CoinIcon.OffsetY,
+                Right = () => CoinIcon.CycleUp(+1),
+                Activate = () => CoinIcon.CycleUp(+1),
+            });
 
             p = AddPage("ゲーム速度");
             p.Items.Add(new Item

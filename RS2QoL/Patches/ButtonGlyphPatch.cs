@@ -25,9 +25,20 @@ namespace RS2QoL.Patches
     internal static class ButtonGlyph
     {
         public static ConfigEntry<bool> Enabled;
+        /// <summary>
+        /// ページ送りの矢印 (L_btn / R_btn) の大きさ (%)。スーパーファミコン版には無いスマホ版の飾り矢印 (141x145) で、
+        /// メニューの HP / LP の切替などに出る。SpriteStudio の部品の大きさは絵の大きさで決まるので、同じ大きさの透明な絵の
+        /// 中央に縮めた矢印を描いた絵に差し替えて小さく見せる (当たり判定や位置は変わらない)。
+        /// 100 以外なら HideButtonGlyphs が Off でも矢印だけは差し替える (元は本体と同じ文字入り btn_steam_en の絵)。
+        /// </summary>
+        public static ConfigEntry<int> ArrowScale;
 
         /// <summary>文字なしのスマホ版 (menu/btn/) にそのまま差し替えるもの。通常と _push の 2 枚ずつ。</summary>
         private static readonly string[] PlainNames = { "L_btn", "R_btn" };
+        private static bool s_arrowsBuiltOn;     // 矢印を作った時の On
+        private static int s_arrowsBuiltScale = -1;   // 矢印を作った時の %
+        private static bool s_appliedOn;          // 登録表に入れた時の On
+        private static int s_appliedScale = -1;   // 登録表に入れた時の %
         /// <summary>Xbox 用の絵 (menu/btn_xboxone/) から丸文字を消して文字を中央に寄せるもの。値は丸文字の数 (情報 は ⓍⓎ情報)。</summary>
         private static readonly KeyValuePair<string, int>[] RecenterNames =
         {
@@ -53,9 +64,25 @@ namespace RS2QoL.Patches
                 "画面のボタン (Ⓐけってい、Ⓑもどる、Ⓧ地域 など) から丸文字を消して文字を中央に、ページ送りの矢印から L / R の文字を消す。" +
                 "丸文字はボタン割り当てを変えると合わなくなり、キーボードでは意味が無いため。false なら本体どおり (Xbox 用の絵)");
             Enabled.SettingChanged += (s, e) => Apply();
+            ArrowScale = config.Bind("Display", "ArrowButtonScalePercent", 55,
+                new ConfigDescription("ページ送りの矢印ボタン (メニューの HP / LP の切替、店や道場のページ送り) の大きさ (%)。スーパーファミコン版には無いスマホ版の飾り矢印で、100 が本体どおり。既定 55。" +
+                    "同じ大きさの透明な絵の中央に縮めた矢印を描くので、位置とマウスの当たり判定は変わらない。戦闘の画面端の矢印と MOD の窓の矢印は対象外",
+                    new AcceptableValueRange<int>(30, 100)));
+            ArrowScale.SettingChanged += (s, e) => Apply();
         }
 
         public static bool On { get { return Enabled != null && Enabled.Value; } }
+        public static int Scale { get { return ArrowScale != null ? Mathf.Clamp(ArrowScale.Value, 30, 100) : 100; } }
+
+        /// <summary>MOD 設定画面用: 5 % 刻みで回す (30〜100)。</summary>
+        public static void CycleScale(int dir)
+        {
+            int v = Scale + dir * 5;
+            if (v > 100) v = 30; else if (v < 30) v = 100;
+            ArrowScale.Value = v;
+        }
+
+        public static string ScaleLabel(int v) { return v == 100 ? "100 % (本体どおり)" : v + " %"; }
 
         /// <summary>登録表を差し替える (On) か戻す (Off)。登録前 (GameMain.Start の途中) に呼ばれたら何もしない。</summary>
         public static void Apply()
@@ -63,14 +90,19 @@ namespace RS2QoL.Patches
             Hashtable regist = s_registField != null ? s_registField.GetValue(null) as Hashtable : null;
             Hashtable regist2 = s_registField2 != null ? s_registField2.GetValue(null) as Hashtable : null;
             if (regist == null || regist2 == null || regist.Count == 0) return;
-            bool want = On;
-            if (want == s_applied) return;
-            if (want && !s_built) Build(regist);
+            bool on = On;
+            int scale = Scale;
+            bool wantArrows = on || scale != 100;   // 矢印は縮小だけでも差し替える
+            bool want = on || wantArrows;
+            if (want == s_applied && on == s_appliedOn && scale == s_appliedScale) return;
+            if (on && !s_built) Build(regist);
+            if (wantArrows && (s_arrowsBuiltOn != on || s_arrowsBuiltScale != scale)) BuildArrows(regist, on, scale);
             int n = 0;
             foreach (KeyValuePair<string, Texture2D> kv in s_mine)
             {
                 if (kv.Value == null) continue;
-                if (want)
+                bool isArrow = kv.Key.StartsWith("L_btn") || kv.Key.StartsWith("R_btn");
+                if (isArrow ? wantArrows : on)
                 {
                     if (!regist.Contains(kv.Key)) continue;       // 本体が登録していない名前は触らない
                     if (!s_orig.ContainsKey(kv.Key)) s_orig[kv.Key] = regist[kv.Key] as Texture2D;
@@ -85,21 +117,96 @@ namespace RS2QoL.Patches
                 n++;
             }
             s_applied = want;
+            s_appliedOn = on;
+            s_appliedScale = scale;
             if (!s_loggedApplied || !want)
             {
                 s_loggedApplied = true;
-                Plugin.Log.LogInfo("[ButtonGlyph] applied: " + (want ? "hide glyphs" : "vanilla") + " (" + n + " textures)");
+                Plugin.Log.LogInfo("[ButtonGlyph] applied: " + (on ? "hide glyphs" : "vanilla glyphs") + ", arrows " + scale + "% (" + n + " textures)");
             }
+        }
+
+        /// <summary>
+        /// 矢印 (L_btn / R_btn とその _push) を作る。元は on なら文字なしのスマホ版 menu/btn/、Off なら本体と同じ文字入り
+        /// menu/btn_steam_en/。scale が 100 でなければ同じ大きさの透明な絵の中央に縮めて描く。
+        /// 前に作った矢印が登録表に入っていれば本体の絵に戻してから捨てる (画面はテクスチャを参照で持つので、捨てずに戻す)。
+        /// </summary>
+        private static void BuildArrows(Hashtable regist, bool on, int scale)
+        {
+            foreach (string name in PlainNames)
+            {
+                foreach (string suffix in new[] { "", "_push" })
+                {
+                    string key = name + suffix;
+                    Texture2D old;
+                    if (s_mine.TryGetValue(key, out old) && old != null)
+                    {
+                        Texture2D o;
+                        if (regist[key] == old && s_orig.TryGetValue(key, out o) && o != null) regist[key] = o;
+                        Object.Destroy(old);
+                        s_mine[key] = null;
+                    }
+                    string path = (on ? "menu/btn/" : "menu/btn_steam_en/") + key + ".png";
+                    Texture2D src = LoadOwn(path);
+                    if (src != null && scale != 100)
+                    {
+                        Texture2D small = null;
+                        try { small = Shrink(src, scale, key); }
+                        catch (System.Exception e) { Plugin.Log.LogWarning("[ButtonGlyph] shrink failed: " + key + ": " + e.Message); }
+                        if (small != null) { Object.Destroy(src); src = small; }
+                    }
+                    s_mine[key] = src;
+                }
+            }
+            s_arrowsBuiltOn = on;
+            s_arrowsBuiltScale = scale;
+            Plugin.Log.LogInfo("[ButtonGlyph] arrows built: " + (on ? "noletter" : "vanilla") + " " + scale + "%");
+        }
+
+        /// <summary>
+        /// src と同じ大きさの透明な絵の中央に、src を percent % に縮めて描く。縮小は元の画素を箱型で平均 (α で重み付け。
+        /// 透明な画素の色が縁に混ざって黒ずまないように)。
+        /// </summary>
+        private static Texture2D Shrink(Texture2D src, int percent, string key)
+        {
+            int w = src.width, h = src.height;
+            int tw = Mathf.Max(1, Mathf.RoundToInt(w * percent / 100f)), th = Mathf.Max(1, Mathf.RoundToInt(h * percent / 100f));
+            int ox = (w - tw) / 2, oy = (h - th) / 2;
+            Color32[] p = src.GetPixels32();
+            Color32[] d = new Color32[w * h];   // 既定は (0,0,0,0) = 透明
+            float sx = w / (float)tw, sy = h / (float)th;
+            for (int y = 0; y < th; y++)
+            {
+                int y0 = Mathf.FloorToInt(y * sy), y1 = Mathf.Min(h, Mathf.Max(y0 + 1, Mathf.CeilToInt((y + 1) * sy)));
+                for (int x = 0; x < tw; x++)
+                {
+                    int x0 = Mathf.FloorToInt(x * sx), x1 = Mathf.Min(w, Mathf.Max(x0 + 1, Mathf.CeilToInt((x + 1) * sx)));
+                    float r = 0, g = 0, b = 0, a = 0; int n = 0;
+                    for (int yy = y0; yy < y1; yy++)
+                    {
+                        for (int xx = x0; xx < x1; xx++)
+                        {
+                            Color32 c = p[yy * w + xx];
+                            r += c.r * c.a; g += c.g * c.a; b += c.b * c.a; a += c.a; n++;
+                        }
+                    }
+                    if (n == 0 || a <= 0f) continue;
+                    d[(oy + y) * w + ox + x] = new Color32((byte)Mathf.RoundToInt(r / a), (byte)Mathf.RoundToInt(g / a), (byte)Mathf.RoundToInt(b / a), (byte)Mathf.RoundToInt(a / n));
+                }
+            }
+            Texture2D t = new Texture2D(w, h, TextureFormat.ARGB32, false);
+            t.name = key + "_" + percent;
+            t.hideFlags = HideFlags.HideAndDontSave;
+            t.wrapMode = src.wrapMode;
+            t.filterMode = src.filterMode;
+            t.SetPixels32(d);
+            t.Apply(false, false);
+            return t;
         }
 
         private static void Build(Hashtable regist)
         {
             s_built = true;
-            foreach (string name in PlainNames)
-            {
-                s_mine[name] = LoadOwn("menu/btn/" + name + ".png");
-                s_mine[name + "_push"] = LoadOwn("menu/btn/" + name + "_push.png");
-            }
             foreach (string suffix in new[] { "", "_push" })
             {
                 Texture2D baseTex = LoadOwn("menu/btn/btn_close" + suffix + ".png");   // 丸文字の無い同じ型のプレート (スマホ版)
