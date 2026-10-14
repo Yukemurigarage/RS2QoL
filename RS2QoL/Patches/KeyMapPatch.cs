@@ -44,13 +44,14 @@ namespace RS2QoL.Patches
         /// マップ移動 = M、メニュー = Tab、ポーズ = P、前 / 次のページ = Q / E、倍速 = F、どこでも大臣 = T、
         /// ゲームを終了 = F10 (PC ゲームの古典的な慣習: Doom / Wolfenstein 3D の F10 = Quit。確認ダイアログが出るので誤爆しても止まる。
         /// Alt+F4 は Unity が自分で処理して確認なしに即終了するので、MOD では扱わない)。
-        /// MOD 設定画面は F1 固定なので なし。ソフトリセット / 引き出しは誤爆が重いので なし。
+        /// ソフトリセット = F9 (F10 の隣で「F9 = タイトルへ、F10 = 終了」。WASD の指が乗る一帯から離れていて、確認ダイアログの初期カーソルは いいえ)。
+        /// MOD 設定画面は F1 固定なので なし。引き出しは誤爆が重いので なし。
         /// </summary>
         public static readonly KeyCode[] Defaults =
         {
             KeyCode.Space, KeyCode.Return, KeyCode.LeftShift, KeyCode.Escape, KeyCode.None, KeyCode.M, KeyCode.Tab,
             KeyCode.P, KeyCode.Q, KeyCode.E,
-            KeyCode.None, KeyCode.F, KeyCode.None, KeyCode.F10, KeyCode.None, KeyCode.T,
+            KeyCode.None, KeyCode.F, KeyCode.F9, KeyCode.F10, KeyCode.None, KeyCode.T,
         };
         public static ConfigEntry<KeyCode>[] Entries;
 
