@@ -112,4 +112,128 @@ namespace RS2QoL.Patches
             if (__state != int.MinValue) __instance.key_is_what = __state;
         }
     }
+
+    /// <summary>
+    /// 会話・イベントが終わってから十字キーを一度も離していない間を覚える (Core.search_ivent は会話中も毎フレーム、移動処理の前に呼ばれる)。
+    /// 会話を十字キー (DialogueAdvanceByDpad) で終えると、同じ押しっぱなしのままその NPC に歩き込む。
+    /// 本体の「触れるとイベントが始まる人」(people_ivent_type == 2 → Core.its_enter_sa) にはガードが無く、
+    /// 会話が終わった次のフレームにそのまま同じ会話を始めてしまう (MOD の押し当て会話 TalkOnBump は会話中にラッチして
+    /// 十字キーを離すまで発動しないので、本体のこの経路だけが即座に再開する)。A で終えていた時は一度離して押し直すので起きなかった。
+    /// </summary>
+    [HarmonyPatch(typeof(Core), "search_ivent")]
+    internal static class DialogueAdvanceHoldPatch
+    {
+        private const int DIR_BITS = 0xF0000;
+        public static bool HeldSinceBusy;   // 会話・イベントの後、十字キーを離していない
+        public static int Frame;            // search_ivent の通し番号 (ログの突き合わせ用)
+        private static int s_prevIvent;
+        private static int s_busyEndFrame;
+
+        private static void Prefix(Core __instance)
+        {
+            Core c = __instance;
+            Frame++;
+            bool busy = (c.ivent_sw | c.mess_flag | c.ivent_stop_flag | c.exevt_flg | c.battle_flg | c.tono_flg | c.exdemo_flg) != 0;
+            // 離したかは joy_data[0] ではなく Sys.key[0] (今のパッドの状態) で見る。会話の終わり (ok_mes_finish2) が joy_data を 0 にするので、
+            // 次のフレームの search_ivent は joy_data[0] == 0 を見て「離した」と誤判定していた (その次のフレームで歩き込んで本体が再開する)
+            if (busy) { HeldSinceBusy = true; s_busyEndFrame = Frame; }
+            else if (((Sys.key[0] | c.joy_data[0]) & DIR_BITS) == 0) HeldSinceBusy = false;   // 生の入力と、本体が移動に使う 1 フレーム遅れのコピーの両方が離れてから
+            s_prevIvent = c.ivent_sw;
+        }
+
+        // Diagnostics: search_ivent でイベントが始まった (ivent_sw 0 → 非 0) 時の入力の状態を出す (会話のたびに 1 行)
+        private static void Postfix(Core __instance)
+        {
+            Core c = __instance;
+            if (s_prevIvent != 0 || c.ivent_sw == 0) return;
+            if (!Plugin.DiagOn) return;
+            Plugin.Log.LogInfo(string.Format("[DialogueAdvance] イベント開始 frame={0} (busy 終了から {1}) ivent_sw={2} no={3},{4} key_is_what=0x{5:X} joy0=0x{6:X} joy1=0x{7:X} Sys.key0=0x{8:X} Sys.key1=0x{9:X} held={10}",
+                Frame, Frame - s_busyEndFrame, c.ivent_sw, c.ivent_no[0], c.ivent_no[1], c.key_is_what, c.joy_data[0], c.joy_data[1], Sys.key[0], Sys.key[1], HeldSinceBusy));
+        }
+    }
+
+    // 会話・イベントの後、十字キーを離すまでは「触れると始まるイベント」を起こさず、普通の人と同じく進めない扱い (work_p[0] = 1) にする。
+    // 元処理 (ivent_sw = 2 + そのマスへ進む) を止める必要があるので Prefix
+    [HarmonyPatch(typeof(Core), "its_enter_sa")]
+    internal static class DialogueAdvanceEnterPatch
+    {
+        private static bool s_logged;
+
+        private static bool Prefix(Core __instance)
+        {
+            if (Plugin.DiagOn)
+                Plugin.Log.LogInfo(string.Format("[DialogueAdvance] its_enter_sa frame={0} held={1} Sys.key0=0x{2:X} joy0=0x{3:X} person={4}",
+                    DialogueAdvanceHoldPatch.Frame, DialogueAdvanceHoldPatch.HeldSinceBusy, Sys.key[0], __instance.joy_data[0], __instance.ivent_people_stok));
+            if (!DialogueAdvanceHoldPatch.HeldSinceBusy) return true;
+            if (((Sys.key[0] | __instance.joy_data[0]) & 0xF0000) == 0) return true;   // 離した直後の 1 フレームは joy_data がまだ押している (本体の移動はそれを使う)
+            __instance.work_p[0] = 1;
+            if (!s_logged)
+            {
+                s_logged = true;
+                Plugin.Log.LogInfo("[DialogueAdvance] applied: 会話直後の触れるイベント (its_enter_sa) を十字キーを離すまで抑止");
+            }
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// NPC 側から始まる会話を、会話・イベントの直後に十字キーを離すまで待たせる。
+    /// NPC の行動パターン (people_move_pat) には「イベントを起こす」命令 (obj_move_command 20〜51 → Core.its_ivent_move) があり、
+    /// 「追いかけて隣に来たら話す」型の NPC はこれで会話を始める。会話を十字キーで終えると押しっぱなしのまま NPC に阻まれて動けず、
+    /// 2 フレーム後にまた捕まって同じ会話が始まる (実機ログ: 会話終了の 2 フレーム後に ivent_sw=1、search_ivent / its_enter_sa / 押し当て会話は通っていない)。
+    /// A で終えて歩き去れば捕まらないので本体では目立たなかった。
+    /// 本体には「取り込み中 (ivent_sw 等) なら people_move_count = 32 にして後で再試行」の分岐があるので、同じ扱いにする (Prefix で元処理を止める)。
+    /// </summary>
+    [HarmonyPatch(typeof(Core), "its_ivent_move")]
+    internal static class DialogueAdvanceNpcEventPatch
+    {
+        private static readonly System.Reflection.FieldInfo s_moveNo = AccessTools.Field(typeof(Core), "move_no");
+        private static bool s_logged;
+
+        private static bool Prefix(Core __instance)
+        {
+            if (!DialogueAdvanceHoldPatch.HeldSinceBusy) return true;
+            if (((Sys.key[0] | __instance.joy_data[0]) & 0xF0000) == 0) return true;   // 離した直後の 1 フレームは joy_data がまだ押している (本体の移動はそれを使う)
+            int no = (int)s_moveNo.GetValue(__instance);
+            if (no < 0 || no >= __instance.people.Length) return true;
+            __instance.people[no].people_move_count = 32;
+            __instance.move_not_mode();
+            if (!s_logged)
+            {
+                s_logged = true;
+                Plugin.Log.LogInfo("[DialogueAdvance] applied: 会話直後の NPC 側から始まる会話 (its_ivent_move) を十字キーを離すまで待たせる (person=" + no + ")");
+            }
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 種別 1 (people_ivent_type == 1) の人に歩き込んだ時のイベント開始 (Core.its_touch_sa)。
+    /// 種別 1 は敵シンボル (触れると戦闘) だけでなく、「十字キーを押し込むだけで話しかける人」もこれ
+    /// (実機ログ: 決定ビット無しの key_is_what=0x20000 で ivent_sw=1、search_ivent / its_enter_sa / its_ivent_move は通っていない)。
+    /// 本体の取り込み中の分岐 (work_p[0] = 1 = 進めない) と同じ扱いで、会話・イベントの後に十字キーを離すまで止める。
+    /// 敵シンボルにも同じ扱いになるが、影響は「会話直後に十字キーを離さず自分から敵に歩き込んでも離すまで戦闘にならない」だけ (敵から触れてくる方は別経路 cant_move_sa_peo で本体のまま)。
+    /// </summary>
+    [HarmonyPatch(typeof(Core), "its_touch_sa")]
+    internal static class DialogueAdvanceTouchPatch
+    {
+        private static bool s_logged;
+
+        private static bool Prefix(Core __instance)
+        {
+            if (Plugin.DiagOn)
+                Plugin.Log.LogInfo(string.Format("[DialogueAdvance] its_touch_sa frame={0} held={1} Sys.key0=0x{2:X} joy0=0x{3:X} person={4}",
+                    DialogueAdvanceHoldPatch.Frame, DialogueAdvanceHoldPatch.HeldSinceBusy, Sys.key[0], __instance.joy_data[0], __instance.ivent_people_stok));
+            if (!DialogueAdvanceHoldPatch.HeldSinceBusy) return true;
+            if (((Sys.key[0] | __instance.joy_data[0]) & 0xF0000) == 0) return true;   // 離した直後の 1 フレームは joy_data がまだ押している (本体の移動はそれを使う)
+            __instance.work_p[0] = 1;
+            if (!s_logged)
+            {
+                s_logged = true;
+                Plugin.Log.LogInfo("[DialogueAdvance] applied: 会話直後の押し込みで始まるイベント (its_touch_sa) を十字キーを離すまで抑止");
+            }
+            return false;
+        }
+    }
+
 }

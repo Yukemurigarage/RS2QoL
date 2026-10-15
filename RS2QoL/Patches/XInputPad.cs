@@ -55,6 +55,19 @@ namespace RS2QoL.Patches
         private static int s_scanTick;
         private static int s_lastDpad;
         private static int s_lastButtons;
+        private static int s_lastLT, s_lastRT;   // このフレームのトリガーの引き量 (0..255、接続中スロットの最大)
+
+        /// <summary>
+        /// 物理ボタン 8 (LT) / 9 (RT) のこのフレームの引き量 (0..255。トリガー以外、XInput 無し、未接続は 0)。
+        /// 倍速の「押している間だけ」(GameSpeed.TriggerHold) が深さで x2 / x3 / x4 を決めるのに使う。
+        /// TriggerThreshold (押下判定) とは別に生の値を返す。
+        /// </summary>
+        internal static int TriggerDepth(int physicalIndex)
+        {
+            if (physicalIndex != 8 && physicalIndex != 9) return 0;
+            ReadDpad();
+            return physicalIndex == 8 ? s_lastLT : s_lastRT;
+        }
 
         // XInput の wButtons のビット。PadMap.PhysicalNames の順 (Button0..3, LB, RB, Start, Select) に対応
         private const ushort XI_A = 0x1000, XI_B = 0x2000, XI_X = 0x4000, XI_Y = 0x8000;
@@ -120,6 +133,8 @@ namespace RS2QoL.Patches
             s_lastDpad = 0;
             s_lastButtons = 0;
             s_lastStick = 0;
+            s_lastLT = 0;
+            s_lastRT = 0;
 
             if (s_unavailable) return 0;
             if (s_get == null && !Resolve()) return 0;
@@ -157,6 +172,8 @@ namespace RS2QoL.Patches
                 int b = st.Gamepad.wButtons & ~(XI_LT_SYNTH | XI_RT_SYNTH);
                 if (st.Gamepad.bLeftTrigger >= TriggerThresholdFor(8)) b |= XI_LT_SYNTH;    // 8 / 9 = PadMap.PhysicalNames の LT / RT
                 if (st.Gamepad.bRightTrigger >= TriggerThresholdFor(9)) b |= XI_RT_SYNTH;
+                if (st.Gamepad.bLeftTrigger > s_lastLT) s_lastLT = st.Gamepad.bLeftTrigger;
+                if (st.Gamepad.bRightTrigger > s_lastRT) s_lastRT = st.Gamepad.bRightTrigger;
                 s_lastButtons |= b;
                 if ((b & DPAD_UP) != 0) s_lastDpad |= DiagonalInputPatch.DIR_UP;
                 if ((b & DPAD_DOWN) != 0) s_lastDpad |= DiagonalInputPatch.DIR_DOWN;

@@ -276,6 +276,26 @@ namespace RS2QoL
                 Activate = () => CycleIndicator(+1),
             });
             AddToggle(p, "起動時から倍速 ON", GameSpeed.StartEnabled);
+            // 押している間だけモード (トリガーは引いた深さで x2 / x3 / x4)。% の行は 1 刻み
+            p.Items.Add(new Item
+            {
+                Label = "倍速ボタンは押している間だけ",
+                Value = () => GameSpeed.TriggerHold.Value ? "ON (今 " + GameSpeed.HoldStateText() + ")" : "OFF (押すたび切替)",
+                Left = () => GameSpeed.TriggerHold.Value = !GameSpeed.TriggerHold.Value,
+                Entry = GameSpeed.TriggerHold,
+                Right = () => GameSpeed.TriggerHold.Value = !GameSpeed.TriggerHold.Value,
+                Activate = () => GameSpeed.TriggerHold.Value = !GameSpeed.TriggerHold.Value,
+            });
+            p.Items.Add(new Item
+            {
+                Label = "  トリガーの引き量 (今)",
+                Value = GameSpeed.TriggerDepthText,
+                Selectable = false,
+            });
+            AddHoldPercent(p, "  x2 になる引き量 (浅く)", GameSpeed.HoldX2Percent, 1, 100);
+            AddHoldPercent(p, "  x3 になる引き量", GameSpeed.HoldX3Percent, 0, 100);
+            AddHoldPercent(p, "  x4 になる引き量 (深く)", GameSpeed.HoldX4Percent, 0, 100);
+            AddHoldPercent(p, "  戻す時のゆとり", GameSpeed.HoldReleasePercent, 0, 50);
             AddToggle(p, "選んでいる文字の点滅は倍速でも等倍の速さに", CursorBlink.RealTime);
 
             p = AddPage("移動");
@@ -316,6 +336,15 @@ namespace RS2QoL
             p = AddPage("会話");
             AddToggle(p, "会話送りはボタンを押すまで待つ", DialogueAdvance.WaitForPress);
             AddToggle(p, "十字キーでも会話を送る", DialogueAdvance.AdvanceByDpad);
+            p.Items.Add(new Item
+            {
+                Label = "会話の文字送りの速さ (本体のまま以外は倍速でも同じ)",
+                Value = () => MessageSpeed.Label(MessageSpeed.Mode.Value),
+                Left = () => MessageSpeed.Cycle(-1),
+                Entry = MessageSpeed.Mode,
+                Right = () => MessageSpeed.Cycle(+1),
+                Activate = () => MessageSpeed.Cycle(+1),
+            });
             AddToggle(p, "NPC に押し当て続けると決定なしで話しかける", TalkOnBump.Enabled);
             p.Items.Add(new Item
             {
@@ -690,6 +719,20 @@ namespace RS2QoL
         }
 
         /// <summary>0〜100 (%) の整数設定を左右 5 刻みで変える行。</summary>
+        /// <summary>1 % 刻みの行 (倍速の押している間だけモードの深さ)。</summary>
+        private static void AddHoldPercent(Page p, string label, BepInEx.Configuration.ConfigEntry<int> entry, int min, int max)
+        {
+            if (entry == null) return;
+            p.Items.Add(new Item
+            {
+                Label = label,
+                Value = () => entry.Value == 0 && min == 0 ? "使わない" : entry.Value + " %",
+                Left = () => entry.Value = Mathf.Max(min, entry.Value - 1),
+                Entry = entry,
+                Right = () => entry.Value = Mathf.Min(max, entry.Value + 1),
+            });
+        }
+
         private static void AddPercent(Page p, string label, BepInEx.Configuration.ConfigEntry<int> entry)
         {
             if (entry == null) return;

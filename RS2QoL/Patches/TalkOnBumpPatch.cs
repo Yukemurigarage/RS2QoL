@@ -92,7 +92,9 @@ namespace RS2QoL.Patches
                 s_busyUntil = s_frame + (CooldownFrames != null ? CooldownFrames.Value : 10) * scale;
                 return 0;
             }
-            if ((c.joy_data[0] & DIR_BITS) == 0)
+            // 離したかは Sys.key[0] (今のパッドの状態) で見る。会話の終わり (ok_mes_finish2) が joy_data を 0 にするので、
+            // joy_data[0] だと次のフレームで「離した」と誤判定してラッチが外れる (クールダウンが 0 だと押しっぱなしで再発動する)
+            if (((c.joy_data[0] | Sys.key[0]) & DIR_BITS) == 0)
             {
                 s_latched = false;
                 s_streak = 0;
@@ -115,10 +117,10 @@ namespace RS2QoL.Patches
             // 正面に人がいなかった (NPC が歩き出した直後など) なら累積を残して次の押し当てで再試行する
             if (c.ivent_sw != 0)
             {
+                if (Plugin.DiagOn)
+                    Plugin.Log.LogInfo("[Bump] talk person=" + s_lastBumpPerson + " dir=" + c.man_direction + " ivent=" + c.ivent_no[0] + "," + c.ivent_no[1] + " streak/frames=" + s_streak + "/" + (Frames != null ? Frames.Value : 8));
                 s_streak = 0;
                 s_latched = true;
-                if (Plugin.DiagEnabled != null && Plugin.DiagEnabled.Value)
-                    Plugin.Log.LogInfo("[Bump] talk person=" + s_lastBumpPerson + " dir=" + c.man_direction + " ivent=" + c.ivent_no[0] + "," + c.ivent_no[1]);
             }
         }
     }

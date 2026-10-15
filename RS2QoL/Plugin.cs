@@ -10,6 +10,8 @@ namespace RS2QoL
     {
         internal static ManualLogSource Log;
         internal static ConfigEntry<bool> DiagEnabled;
+        /// <summary>[Diagnostics] Enabled が ON か (動作時の調査ログを出すかの共通の条件)</summary>
+        internal static bool DiagOn { get { return DiagEnabled != null && DiagEnabled.Value; } }
         internal static ConfigEntry<int> DiagonalGraceFrames;
         internal static ConfigEntry<int> DiagonalSwitchFrames;
         internal static ConfigEntry<Patches.DiagonalPolicy> DiagonalPolicy;
@@ -89,6 +91,8 @@ namespace RS2QoL
             Patches.BattleLR.Bind(Config);
             // 会話ウィンドウの送りと選択肢の決定をボタンを新たに押すまで待つ ([Field] DialogueWaitForPress)
             Patches.DialogueAdvance.Bind(Config);
+            // 会話ウィンドウの文字送りの速さ ([Field] MessageSpeed、既定 Default = 本体のまま。x2 / x3 / Instant は倍速に関わらず実時間で同じ速さ)
+            Patches.MessageSpeed.Bind(Config);
             // NPC に十字キーを押し当て続けると決定なしで話しかける ([Field] TalkOnBump / TalkOnBumpFrames / TalkOnBumpCooldownFrames)
             Patches.TalkOnBump.Bind(Config);
             Patches.PauseHint.Bind(Config);
@@ -139,6 +143,8 @@ namespace RS2QoL
             var harmony = new Harmony(MyPluginInfo.PLUGIN_GUID);
             harmony.PatchAll();
             Logger.LogInfo("Harmony patches applied");
+            Logger.LogInfo("[MessageSpeed] patched: Core.message_lop (MessageSpeed=" + Patches.MessageSpeed.Mode.Value + ")");
+            Logger.LogInfo("[DialogueAdvance] patched: Core.pause_sa / message_lop2 / put_select / search_ivent / its_enter_sa / its_ivent_move / its_touch_sa (WaitForPress=" + Patches.DialogueAdvance.WaitEnabled + " ByDpad=" + Patches.DialogueAdvance.DpadEnabled + ")");
             Patches.PartyWeight.LogPatched();
             Patches.WorldScrollSpeed.LogPatched();
             Patches.KeyMap.LogPatched();
