@@ -28,13 +28,32 @@ namespace RS2QoL.Patches
     ///  おおよそでしか動かないうえ、そこまで調整したい場面が無いので % だけにした。段ごとの戦闘回数は設定画面に表示だけする。)
     /// 読み替えるのは敵決め (段と数) だけなので、仲間の HP・アバロン発展・敵の行動回数は本体どおり。追憶の迷宮 (mapno >= 494) は触らない。
     /// 一時停止は Core.btl_counter_add の Prefix/Postfix で増えた分を戻す (こちらはカウンタそのものなので HP・発展も止まる)。
+    ///
+    /// 退却した戦闘を数えない (SkipEscape):
+    /// - カウンタが増えるのは戦闘の「後」。戦闘が終わると Battle (proc 300) が partydata[129] = party_result (4 = 退却、2 = 全滅、0 = 勝ち …)、
+    ///   partydata[130] = monster_result を書き、Core が battle_proc 200 で Battle.dest() を呼んでフィールドに戻る。その後に戦闘後スクリプト
+    ///   (通常戦闘は msg 2053、イベント戦闘は各イベント) が msg 2061 を CALL し、2061 の先頭で btl_counter_add(1) → その後で flag65 (= partydata[129]
+    ///   の下位ニブル) を見て退却 (4) / 全滅 (2) に分岐する。つまり本体は退却でも数える (SFC と同じ)。
+    /// - btl_counter_add は 2061 のほかに皇位継承の msg 2832 (btl_counter_add(4)、戦闘の直後とは限らない) からも呼ばれるので、partydata[129] を
+    ///   btl_counter_add の中で見るだけでは古い結果を拾う。Battle.dest の Postfix で「今終わった戦闘が退却か」を控え、次の btl_counter_add
+    ///   1 回だけで消費する。Battle.init で消す (退却した戦闘のスクリプトが数えなかった時に、次の戦闘まで残らないように)。
+    /// - 戻すのはカウンタ (686) だけ。2061 の残り (税収 add_budget、アバロンの木の戦闘回数 APPNEW 32、work51) は本体どおり走る。
     /// </summary>
     internal static class EnemyGrowth
     {
         public static ConfigEntry<bool> Enabled;
         public static ConfigEntry<bool> Paused;
+        /// <summary>退却で終わった戦闘を戦闘回数に数えない。本体 (SFC も) は数える。</summary>
+        public static ConfigEntry<bool> SkipEscape;
         /// <summary>敵が強くなる速さ (%)。本体は 100。50 なら 2 倍の戦闘回数をかけて強くなる。</summary>
         public static ConfigEntry<int> Percent;
+
+        private const int RESULT = 129;      // Work.partydata[129] = Battle.party_result (戦闘の終わり方)
+        private const int RESULT_ESCAPE = 4; // 退却 (戦闘後スクリプトの flag65 == 4 と同じ)
+        /// <summary>直前に終わった戦闘が退却で、まだ btl_counter_add が走っていない (カウンタ用。1 回で消費)。</summary>
+        private static bool s_escapePending;
+        /// <summary>直前に終わった戦闘が退却 (Battle.dest で立ち、次の Battle.init まで残る)。戦闘後スクリプト msg 2061 の他の命令 (税収 add_budget など) が見る。</summary>
+        public static bool LastBattleEscaped { get; private set; }
 
         /// <summary>段 1〜16 の下限保証 (しきい値の 16 系統平均)。</summary>
         private static readonly int[] RANK_FLOORS = { 0, 55, 122, 231, 320, 432, 570, 683, 827, 957, 1094, 1234, 1362, 1499, 1641, 1803 };
@@ -56,6 +75,10 @@ namespace RS2QoL.Patches
             Paused = config.Bind("Growth", "Paused", false,
                 "はい の間は敵が強くならない (戦闘回数カウンタが増えない。仲間の初期 HP と、アバロンの次の建設が解禁される戦闘回数も止まる。"
                 + "アバロンの木の成長と建設中の完成待ちは別のカウンタなので止まらない)");
+            SkipEscape = config.Bind("Growth", "SkipEscape", false,
+                "はい なら退却で終わった戦闘を戦闘回数に数えない (本体は SFC と同じく退却でも数える)。"
+                + "数えないのは敵の強さの元になる戦闘回数カウンタだけで、一時停止と同じく仲間の初期 HP とアバロンの建設解禁にも効く。"
+                + "税収とアバロンの木の成長は退却でも本体どおり入る");
             Percent = config.Bind("Growth", "Percent", 100,
                 new ConfigDescription("敵が強くなる速さ (%)。本体は 100。50 なら本体の 2 倍の戦闘回数をかけて強くなり、200 なら半分で強くなる。"
                     + "16 系統どれも同じ割合で変わる。10 刻み",
@@ -128,6 +151,8 @@ namespace RS2QoL.Patches
 
         public static void OnAdded(int before)
         {
+            bool escaped = s_escapePending;
+            s_escapePending = false;    // 戦闘後の最初の加算 1 回だけに効かせる (皇位継承の +4 などには残さない)
             int after = Work.partydata[COUNTER];
             int delta = after - before;
             if (delta <= 0) return;
@@ -137,8 +162,38 @@ namespace RS2QoL.Patches
                 Plugin.Log.LogInfo("[Growth] +" + delta + " paused -> " + before);
                 return;
             }
-            Plugin.Log.LogInfo("[Growth] +" + delta + " -> " + after + " (enemy level counter " + Map(after) + ")");
+            if (IsEnabled && escaped && SkipEscape != null && SkipEscape.Value)
+            {
+                Work.partydata[COUNTER] = before;
+                Plugin.Log.LogInfo("[Growth] +" + delta + " escaped, not counted -> " + before);
+                return;
+            }
+            Plugin.Log.LogInfo("[Growth] +" + delta + " -> " + after + " (enemy level counter " + Map(after) + ")" + (escaped ? " escaped" : ""));
         }
+
+        /// <summary>戦闘の始まり (Battle.init)。前の戦闘の退却が未消費でも捨てる。</summary>
+        public static void OnBattleStart() { s_escapePending = false; LastBattleEscaped = false; }
+
+        /// <summary>戦闘の終わり (Battle.dest)。partydata[129] はこの直前の proc 300 で今の戦闘の結果に書き換わっている。</summary>
+        public static void OnBattleEnd()
+        {
+            int result = Work.partydata != null && Work.partydata.Length > RESULT ? Work.partydata[RESULT] : -1;
+            s_escapePending = result == RESULT_ESCAPE;
+            LastBattleEscaped = s_escapePending;
+            if (Plugin.DiagOn) Plugin.Log.LogInfo("[Growth] battle end result " + result + (s_escapePending ? " (escaped)" : ""));
+        }
+    }
+
+    [HarmonyPatch(typeof(Battle), "init")]
+    internal static class EnemyGrowth_Battle_init_Patch
+    {
+        private static void Postfix() { EnemyGrowth.OnBattleStart(); }
+    }
+
+    [HarmonyPatch(typeof(Battle), "dest")]
+    internal static class EnemyGrowth_Battle_dest_Patch
+    {
+        private static void Postfix() { EnemyGrowth.OnBattleEnd(); }
     }
 
     [HarmonyPatch(typeof(Core), "btl_counter_add")]

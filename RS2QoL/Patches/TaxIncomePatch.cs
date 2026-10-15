@@ -21,6 +21,8 @@ namespace RS2QoL.Patches
     {
         /// <summary>税収の倍率 (%)。本体は 100。</summary>
         public static ConfigEntry<int> Percent;
+        /// <summary>退却で終わった戦闘でも税収を入れる。本体は入れる。</summary>
+        public static ConfigEntry<bool> OnEscape;
 
         private const int TREASURY = 418;        // Work.PARTY_budget
         private const int INCOME_POINTS = 152;   // partydata[97 + 55] = スクリプトの work55 (収入ポイント)
@@ -33,9 +35,14 @@ namespace RS2QoL.Patches
                 new ConfigDescription("戦闘のたびに国庫に入る税収の倍率 (%)。本体は 100。200 なら 2 倍、50 なら半分。"
                     + "敵の強さ・味方の成長・宝箱の N 万クラウン・施設の費用には影響しない。10 刻み",
                     new AcceptableValueRange<int>(MIN_PCT, MAX_PCT)));
+            OnEscape = config.Bind("Economy", "TaxOnEscape", true,
+                "退却で終わった戦闘でも税収を国庫に入れる (本体どおり)。いいえ なら退却した戦闘では入れない (退却を繰り返して稼げなくなる)。"
+                + "敵の強さの戦闘回数は [Growth] SkipEscape で別に決める");
         }
 
         private static int Pct { get { return Percent != null ? Percent.Value : 100; } }
+
+        public static bool SkipOnEscape { get { return OnEscape != null && !OnEscape.Value; } }
 
         public static int Treasury { get { return Work.partydata != null && Work.partydata.Length > TREASURY ? Work.partydata[TREASURY] : 0; } }
 
@@ -104,6 +111,13 @@ namespace RS2QoL.Patches
             {
                 // 国庫が上限近く (budget_sep で足さない) か、増えなかった。パッチが呼ばれたことだけ残す
                 Plugin.Log.LogInfo("[Economy] add_budget called, treasury unchanged (" + after + ")");
+                return;
+            }
+            if (TaxIncome.SkipOnEscape && EnemyGrowth.LastBattleEscaped)
+            {
+                // 退却した戦闘: 戦闘後スクリプト (msg 2061) が足した分をそのまま戻す。add_budget はこのスクリプトからしか呼ばれない
+                Work.partydata[418] = __state;
+                Plugin.Log.LogInfo("[Economy] tax vanilla +" + delta + " escaped, not added (treasury " + __state + ")");
                 return;
             }
             int scaled = TaxIncome.Scale(delta);

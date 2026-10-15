@@ -482,6 +482,7 @@ namespace RS2QoL
             });
             AddToggle(p, "敵が強くなる速さを MOD で調整する", EnemyGrowth.Enabled);
             AddToggle(p, "敵の成長を一時停止する", EnemyGrowth.Paused);
+            AddToggle(p, "退却した戦闘は数えない", EnemyGrowth.SkipEscape);
             p.Items.Add(new Item
             {
                 Label = "敵が強くなる速さ",
@@ -558,6 +559,7 @@ namespace RS2QoL
                 Activate = () => TaxIncome.CyclePercent(+10),
                 Changed = () => TaxIncome.Percent.Value != 100,
             });
+            AddToggle(p, "退却した戦闘でも税収を入れる (本体どおり)", TaxIncome.OnEscape);
             p.Items.Add(new Item
             {
                 Label = "敵の強さ・味方の成長・宝箱の N 万クラウン・施設の費用は変わらない",

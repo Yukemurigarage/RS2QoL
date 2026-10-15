@@ -145,6 +145,8 @@ namespace RS2QoL
             Logger.LogInfo("Harmony patches applied");
             Logger.LogInfo("[MessageSpeed] patched: Core.message_lop (MessageSpeed=" + Patches.MessageSpeed.Mode.Value + ")");
             Logger.LogInfo("[DialogueAdvance] patched: Core.pause_sa / message_lop2 / put_select / search_ivent / its_enter_sa / its_ivent_move / its_touch_sa (WaitForPress=" + Patches.DialogueAdvance.WaitEnabled + " ByDpad=" + Patches.DialogueAdvance.DpadEnabled + ")");
+            Logger.LogInfo("[Growth] patched: Core.btl_counter_add / Work.getBattleCount / Battle.init / Battle.dest (Percent=" + Patches.EnemyGrowth.Percent.Value + " Paused=" + Patches.EnemyGrowth.Paused.Value + " SkipEscape=" + Patches.EnemyGrowth.SkipEscape.Value + ")");
+            Logger.LogInfo("[Economy] patched: Core.add_budget (TaxPercent=" + Patches.TaxIncome.Percent.Value + " TaxOnEscape=" + Patches.TaxIncome.OnEscape.Value + ")");
             Patches.PartyWeight.LogPatched();
             Patches.WorldScrollSpeed.LogPatched();
             Patches.KeyMap.LogPatched();
