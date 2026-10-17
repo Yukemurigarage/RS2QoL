@@ -640,6 +640,7 @@ namespace RS2QoL
             p = AddPage("その他");
             AddToggle(p, "防具・盾の詳しい防御力を表示", ArmorInfo.Enabled);
             AddToggle(p, "店で装備している仲間に E を表示", ShopEquipMark.Enabled);
+            AddToggle(p, "店で買う品物と今の装備の差 (▲N / ▼N) を表示", ShopEquipCompare.Enabled);
             AddToggle(p, "店で E の仲間が回って構える", ShopEquipSpin.Enabled);
             AddToggle(p, "ステータスの素早さを防具の重さを引いた戦闘の値に", PartyWeight.StatusEnabled);
             AddToggle(p, "ポーズの窓に MOD 設定画面の開き方を出す", PauseHint.Enabled);

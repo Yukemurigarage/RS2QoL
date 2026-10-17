@@ -19,7 +19,8 @@ namespace RS2QoL.Patches
     /// 正面のマスを見るのは本体なので宝箱は対象にならない (宝箱は人ではないので押し当てにならない)。
     ///
     /// 誤爆対策:
-    /// - 会話・イベント中はラッチし、十字キーを全部離すまで解除しない (会話を閉じた押しのまま押し当てが続いても再開しない)。
+    /// - 会話・イベント中はラッチし、十字キーを全部離すか自分が 1 マス歩き出すまで解除しない (会話を閉じた押しのまま押し当てが続いても再開しない。
+    ///   歩き去る NPC を押しっぱなしで追う時は 1 歩進んでから阻まれるので、離さなくても話せる)。
     /// - 会話・イベントが終わってから TalkOnBumpCooldownFrames の間は押し当てを数えない (会話送りの連打の最後が NPC に向いていても拾わない)。
     /// - 押し当ては十字キーを離さない限り同じ人に対して累積する (歩く NPC を後ろから追う時は止められるのが数フレームずつしか続かないため)。
     ///   途切れが 1 秒を超えるか別の人に当たったら数え直し。しきい値は実時間基準 (倍速中は倍率を掛ける)。
@@ -38,8 +39,32 @@ namespace RS2QoL.Patches
         private static int s_lastBumpFrame = -100;  // 最後に人に止められたフレーム
         private static int s_lastBumpPerson = -1;
         private static int s_streak;                // 同じ人に続けて止められた回数
-        private static bool s_latched;              // 十字キーを全部離すまで発動しない
+        private static bool s_latched;              // 十字キーを全部離すか 1 マス歩き出すまで発動しない
         private static int s_busyUntil = -100;      // 会話・イベント終了後のクールダウンの終わり
+        private static int s_stepAtBusy;            // busy の最後に見た StepSerial (これが進んだら会話の後に 1 マス歩いた)
+        private static bool s_blockLogged;          // 診断: 1 回の押し当て (streak) につき「発動できなかった理由」を 1 行だけ出す
+        private static int s_streakStartFrame;      // 診断: 今の押し当てが始まったフレーム
+
+        private static string Flags(Core c)
+        {
+            return "ivent_sw=" + c.ivent_sw + " mess=" + c.mess_flag + " stop=" + c.ivent_stop_flag + " exevt=" + c.exevt_flg
+                + " battle=" + c.battle_flg + " tono=" + c.tono_flg + " exdemo=" + c.exdemo_flg;
+        }
+
+        private static string Keys(Core c)
+        {
+            return "joy0=0x" + c.joy_data[0].ToString("X") + " Sys.key0=0x" + Sys.key[0].ToString("X") + " kiw=0x" + c.key_is_what.ToString("X");
+        }
+
+        // 診断: 押し当てがしきい値に達しているのに発動しなかった理由 (1 回の押し当てにつき 1 行)
+        private static void LogBlocked(Core c, string why)
+        {
+            if (!Plugin.DiagOn || s_blockLogged) return;
+            s_blockLogged = true;
+            Plugin.Log.LogInfo("[Bump] blocked(" + why + ") frame=" + s_frame + " person=" + s_lastBumpPerson + " streak=" + s_streak
+                + " since=" + s_streakStartFrame + " lastBump=" + s_lastBumpFrame + " latched=" + s_latched + " busyUntil=" + s_busyUntil
+                + " held=" + DialogueAdvanceHoldPatch.HeldSinceBusy + " " + Keys(c));
+        }
 
         public static void Bind(ConfigFile config)
         {
@@ -72,7 +97,15 @@ namespace RS2QoL.Patches
             // 「止められる → NPC が進む → 自分も進む → また止められる」と数フレームずつしか続かない。
             // そこで十字キーを離さない限り同じ人への押し当てを累積する (途切れが 1 秒を超えたら数え直し)
             if (s_lastBumpPerson == person && s_lastBumpFrame >= s_frame - 30 * GameSpeed.FrameScale()) s_streak++;
-            else s_streak = 1;
+            else
+            {
+                s_streak = 1;
+                s_blockLogged = false;
+                s_streakStartFrame = s_frame;
+                if (Plugin.DiagOn)
+                    Plugin.Log.LogInfo("[Bump] start frame=" + s_frame + " person=" + person + " latched=" + s_latched + " busyUntil=" + s_busyUntil
+                        + " held=" + DialogueAdvanceHoldPatch.HeldSinceBusy + " " + Keys(c) + " " + Flags(c));
+            }
             s_lastBumpFrame = s_frame;
             s_lastBumpPerson = person;
         }
@@ -87,24 +120,40 @@ namespace RS2QoL.Patches
             bool busy = (c.ivent_sw | c.mess_flag | c.ivent_stop_flag | c.exevt_flg | c.battle_flg | c.tono_flg | c.exdemo_flg) != 0;
             if (busy)
             {
+                if (!s_latched && Plugin.DiagOn)
+                    Plugin.Log.LogInfo("[Bump] latch frame=" + s_frame + " " + Flags(c) + " " + Keys(c));
                 s_latched = true;
                 s_streak = 0;
                 s_busyUntil = s_frame + (CooldownFrames != null ? CooldownFrames.Value : 10) * scale;
+                s_stepAtBusy = DialogueAdvanceStepPatch.StepSerial;
                 return 0;
+            }
+            // 会話の後に自分が 1 マス歩き出したらラッチを解く (再開の誤爆では 1 歩も動けないので区別できる)。
+            // 歩き去る NPC を押しっぱなしで追う時は「1 歩進む → 阻まれる」の繰り返しなので、離さなくても次の押し当てで話せる
+            // クールダウン (TalkOnBumpCooldownFrames) はここでは終わらせない。歩き出しで終わらせると、歩き去る NPC を追う 1 歩目の押し当てで
+            // すぐ話してしまう。ユーザーの決定で「閉じた直後の 1 歩目では話さず、クールダウンが明けてから」の方を採った (2026-10-17)
+            if (s_latched && DialogueAdvanceStepPatch.StepSerial != s_stepAtBusy)
+            {
+                if (Plugin.DiagOn)
+                    Plugin.Log.LogInfo("[Bump] unlatch(stepped) frame=" + s_frame + " busyUntil=" + s_busyUntil + " " + Keys(c));
+                s_latched = false;
             }
             // 離したかは Sys.key[0] (今のパッドの状態) で見る。会話の終わり (ok_mes_finish2) が joy_data を 0 にするので、
             // joy_data[0] だと次のフレームで「離した」と誤判定してラッチが外れる (クールダウンが 0 だと押しっぱなしで再発動する)
             if (((c.joy_data[0] | Sys.key[0]) & DIR_BITS) == 0)
             {
+                if (s_latched && Plugin.DiagOn)
+                    Plugin.Log.LogInfo("[Bump] unlatch frame=" + s_frame + " " + Keys(c));
                 s_latched = false;
                 s_streak = 0;
                 return 0;
             }
-            if (s_latched) return 0;
-            if (s_frame < s_busyUntil) { s_streak = 0; return 0; }
+            bool ready = s_streak >= (Frames != null ? Frames.Value : 8) * scale;
+            if (s_latched) { if (ready) LogBlocked(c, "latched"); return 0; }
+            if (s_frame < s_busyUntil) { if (ready) LogBlocked(c, "cooldown"); s_streak = 0; return 0; }
             if (s_lastBumpFrame < s_frame - 2) return 0; // 今この瞬間は止められていない (正面に人がいない可能性が高い)。累積は残す
-            if (s_streak < (Frames != null ? Frames.Value : 8) * scale) return 0;
-            if ((c.key_is_what & OK_BITS) != 0) return 0; // 本物の決定はそのまま
+            if (!ready) return 0;
+            if ((c.key_is_what & OK_BITS) != 0) { LogBlocked(c, "realOK"); return 0; } // 本物の決定はそのまま
             int orig = c.key_is_what;
             c.key_is_what = orig | OK_BIT;
             applied = true;
@@ -115,6 +164,7 @@ namespace RS2QoL.Patches
         {
             c.key_is_what = orig;
             // 正面に人がいなかった (NPC が歩き出した直後など) なら累積を残して次の押し当てで再試行する
+            if (c.ivent_sw == 0) LogBlocked(c, "noIvent dir=" + c.man_direction);
             if (c.ivent_sw != 0)
             {
                 if (Plugin.DiagOn)

@@ -259,9 +259,10 @@ namespace RS2QoL
         /// 本体の装備画面の品目欄 (武器: / 防具: の暗い半透明の角丸) と同じ見た目の箱。部品は自前で焼くので常に描ける。
         /// 角だけ焼いた小さな絵を GUIStyle.border で 9 分割して引き伸ばす。
         /// </summary>
-        public static void DrawDarkBox(Rect r)
+        public static void DrawDarkBox(Rect r, float radius = DARK_BOX_RADIUS)
         {
-            int rad = Mathf.Max(4, Mathf.RoundToInt(DARK_BOX_RADIUS * Unit));
+            // radius は仮想単位。店の品物の一覧の箱のように角の大きい箱に並べる時は呼び出し側が大きめを渡す (半径が変わると焼き直す)
+            int rad = Mathf.Max(4, Mathf.RoundToInt(radius * Unit));
             if (s_darkBox == null || s_darkBoxRadius != rad) BakeDarkBox(rad);
             GUI.Box(r, GUIContent.none, s_darkBoxStyle);
         }

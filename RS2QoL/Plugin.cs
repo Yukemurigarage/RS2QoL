@@ -83,6 +83,8 @@ namespace RS2QoL
             Patches.CursorBlink.Bind(Config);
             // 店の買う / 売るの確認画面で、すでに装備している仲間の絵の横に E を出す ([Menu] ShopEquipMark、既定 true)
             Patches.ShopEquipMark.Bind(Config);
+            // 店で買う武器・防具・盾を仲間それぞれの今の装備と比べた差 (▲N / ▼N) を絵の横に出す ([Menu] ShopEquipCompare、既定 true)
+            Patches.ShopEquipCompare.Bind(Config);
             // 店で E が付く仲間の絵を、戦闘でコマンドを決めた時と同じ「回って構える」動きに (武器は攻撃の構え、防具・道具は選択中の構え) ([Menu] ShopEquipSpin、既定 true)
             Patches.ShopEquipSpin.Bind(Config);
             // ステータス画面の素早さを防具の重さ (÷2) を引いた戦闘の値にする ([Menu] StatusAgilityAfterWeight、既定 true)。どこでも大臣の 2 ページ目 (体重計) も同じ計算

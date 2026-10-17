@@ -128,6 +128,7 @@ namespace RS2QoL.Patches
         public static int Frame;            // search_ivent の通し番号 (ログの突き合わせ用)
         private static int s_prevIvent;
         private static int s_busyEndFrame;
+        private static int s_stepAtBusy;    // busy の最後に見た StepSerial (これが進んだら会話の後に 1 マス歩いた)
 
         private static void Prefix(Core __instance)
         {
@@ -136,8 +137,16 @@ namespace RS2QoL.Patches
             bool busy = (c.ivent_sw | c.mess_flag | c.ivent_stop_flag | c.exevt_flg | c.battle_flg | c.tono_flg | c.exdemo_flg) != 0;
             // 離したかは joy_data[0] ではなく Sys.key[0] (今のパッドの状態) で見る。会話の終わり (ok_mes_finish2) が joy_data を 0 にするので、
             // 次のフレームの search_ivent は joy_data[0] == 0 を見て「離した」と誤判定していた (その次のフレームで歩き込んで本体が再開する)
-            if (busy) { HeldSinceBusy = true; s_busyEndFrame = Frame; }
-            else if (((Sys.key[0] | c.joy_data[0]) & DIR_BITS) == 0) HeldSinceBusy = false;   // 生の入力と、本体が移動に使う 1 フレーム遅れのコピーの両方が離れてから
+            bool prevHeld = HeldSinceBusy;
+            string why = null;
+            if (busy) { HeldSinceBusy = true; s_busyEndFrame = Frame; s_stepAtBusy = DialogueAdvanceStepPatch.StepSerial; }
+            else if (((Sys.key[0] | c.joy_data[0]) & DIR_BITS) == 0) { HeldSinceBusy = false; why = "released"; }   // 生の入力と、本体が移動に使う 1 フレーム遅れのコピーの両方が離れてから
+            // 会話の後に自分が 1 マス歩き出したら解く。再開の誤爆 (会話を閉じた押しのままその人に阻まれる) では 1 歩も動けないので区別できる。
+            // 歩き去る NPC を押しっぱなしで追う時は「1 歩進む → 阻まれる」の繰り返しになるので、離さなくても次の押し当てで話せる
+            else if (HeldSinceBusy && DialogueAdvanceStepPatch.StepSerial != s_stepAtBusy) { HeldSinceBusy = false; why = "stepped"; }
+            if (prevHeld != HeldSinceBusy && Plugin.DiagOn)
+                Plugin.Log.LogInfo(string.Format("[DialogueAdvance] held {0}→{1} ({12}) frame={2} ivent_sw={3} mess={4} stop={5} exevt={6} battle={7} tono={8} exdemo={9} joy0=0x{10:X} Sys.key0=0x{11:X}",
+                    prevHeld, HeldSinceBusy, Frame, c.ivent_sw, c.mess_flag, c.ivent_stop_flag, c.exevt_flg, c.battle_flg, c.tono_flg, c.exdemo_flg, c.joy_data[0], Sys.key[0], why ?? "busy"));
             s_prevIvent = c.ivent_sw;
         }
 
@@ -152,7 +161,27 @@ namespace RS2QoL.Patches
         }
     }
 
-    // 会話・イベントの後、十字キーを離すまでは「触れると始まるイベント」を起こさず、普通の人と同じく進めない扱い (work_p[0] = 1) にする。
+    /// <summary>
+    /// 自分のマス移動が始まった回数 (Core.move_human_sub_r の Postfix で、止まっている → 動き出した の立ち上がりを数える)。
+    /// 会話の後のラッチ (HeldSinceBusy / TalkOnBump) を「十字キーを離すか、1 マス歩き出すまで」にするために使う。
+    /// イベントの自動歩行中も数えるが、その間は busy なのでラッチ側が毎フレーム基準値を取り直すため影響しない。
+    /// </summary>
+    [HarmonyPatch(typeof(Core), "move_human_sub_r")]
+    internal static class DialogueAdvanceStepPatch
+    {
+        public static int StepSerial;
+        private static bool s_prevStepping;
+
+        private static void Postfix(Core __instance)
+        {
+            Core c = __instance;
+            bool stepping = c.map_scrol_flag_v != 0 || c.map_scrol_flag_h != 0 || c.man_move_flag_v != 0 || c.man_move_flag_h != 0;
+            if (stepping && !s_prevStepping) StepSerial++;
+            s_prevStepping = stepping;
+        }
+    }
+
+    // 会話・イベントの後、十字キーを離す (か 1 マス歩き出す) までは「触れると始まるイベント」を起こさず、普通の人と同じく進めない扱い (work_p[0] = 1) にする。
     // 元処理 (ivent_sw = 2 + そのマスへ進む) を止める必要があるので Prefix
     [HarmonyPatch(typeof(Core), "its_enter_sa")]
     internal static class DialogueAdvanceEnterPatch
@@ -198,6 +227,8 @@ namespace RS2QoL.Patches
             if (no < 0 || no >= __instance.people.Length) return true;
             __instance.people[no].people_move_count = 32;
             __instance.move_not_mode();
+            if (Plugin.DiagOn)
+                Plugin.Log.LogInfo("[DialogueAdvance] its_ivent_move を抑止 frame=" + DialogueAdvanceHoldPatch.Frame + " person=" + no + " cmd=" + __instance.obj_move_command);
             if (!s_logged)
             {
                 s_logged = true;

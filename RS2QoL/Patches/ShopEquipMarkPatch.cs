@@ -13,31 +13,15 @@ namespace RS2QoL.Patches
     /// 誰が装備しているかは分からない。各画面の init_shop_* は mode 0 の間毎フレーム呼ばれ、その中の player_sel_obj_all が
     /// 仲間の絵を "p_obj_01".."p_obj_05" の矩形に毎フレーム描き直している。ここではその Postfix で同じ矩形を取り、
     /// 装備欄 (memberdata[i][77..84] の 8 枠。本体の item_have_chk が「装備数」を数えるのと同じ場所) に品物があれば
-    /// 絵の右上に E を描く。E は隣のキャラの絵と同じ粗さのドット絵 (5x7) で、本体の GS.FillRect (仮想 960x540 の座標) で描く。
+    /// 絵の横に E を描く。表示は ShopBubble (本体の会話窓を小さくした吹き出し + ドット絵の文字)。買う画面では ShopEquipCompare が
+    /// E と ▲N / ▼N を 1 つの吹き出しにまとめて描くので、ここが描くのは売る一覧と、比べる対象でない品物 (道具など) の時だけ。
     /// </summary>
     internal static class ShopEquipMark
     {
         public static ConfigEntry<bool> Enabled;
 
         private const int EQUIP_SLOT_FIRST = 77, EQUIP_SLOTS = 8;
-        // E は本体のフォントではなく、隣のキャラの絵と同じ粗さのドット絵で描く (本体のフォントを半分にすると線が細すぎる)。
-        // 1 ドット = キャラの絵の 1 ドット (16 ドット幅の絵が 36 単位の矩形に描かれるので 36/16 = 2.25 単位)。
-        // 字形は昔の 8x8 フォント風の 5x7。行ごとに横につながった部分を 1 つの矩形にして GS.FillRect で描く (1 文字 7 矩形)
-        private const float DOT = 36f / 16f;
-        private static readonly int[] s_rows = { 5, 1, 1, 4, 1, 1, 5 };   // 各行の左端からの横幅 (ドット)
-        private const float OFFSET_X = 2f + DOT, OFFSET_Y = -2f;      // 絵の右上。少し上げて頭の上端に揃える (仮想 960x540 の単位)
-        private const float SHADOW_DOTS = 1f;                   // 右下に 1 ドットずらした薄い影を先に描き、その上に本体の黒を重ねる
-        private static readonly Color32 s_color = new Color32(48, 48, 48, 255);
-        private static readonly Color32 s_shadow = new Color32(0, 0, 0, 72);
-
-        private static void DrawE(float x, float y, int pri)
-        {
-            float sx = x + DOT * SHADOW_DOTS, sy = y + DOT * SHADOW_DOTS;
-            for (int r = 0; r < s_rows.Length; r++)
-                GS.FillRect(sx, sy + DOT * r, pri, DOT * s_rows[r], DOT, s_shadow);
-            for (int r = 0; r < s_rows.Length; r++)
-                GS.FillRect(x, y + DOT * r, pri, DOT * s_rows[r], DOT, s_color);
-        }
+        private static readonly int[] s_e = { ShopBubble.GLYPH_E, ShopBubble.GLYPH_BANG };   // E!
 
         public static void Bind(ConfigFile config)
         {
@@ -50,6 +34,7 @@ namespace RS2QoL.Patches
         {
             if (Enabled == null || !Enabled.Value || s_failed) return;
             if (item < 0 || item >= 255) return;
+            if (ShopEquipCompare.Handles(control, item)) return;   // 買う画面では ShopEquipCompare が E も含めて 1 つの吹き出しに描く
             try
             {
                 CSpriteStudioObject sso = SpriteStudioManager.GetSpriteStudio(control);
@@ -63,7 +48,9 @@ namespace RS2QoL.Patches
                     if (!Equipped(i, item)) continue;
                     Rect rect = sso.GetSpriteRect("p_obj_" + (i + 1).ToString("00"));
                     if (rect.width <= 0f) continue;
-                    DrawE(rect.x + rect.width + OFFSET_X, rect.y + OFFSET_Y, pri);
+                    float x0, y0;
+                    ShopBubble.Anchor(rect, out x0, out y0);
+                    ShopBubble.Draw(i, s_e, 2, x0, y0, pri);
                 }
             }
             catch (System.Exception e)
@@ -74,6 +61,12 @@ namespace RS2QoL.Patches
         }
 
         private static bool s_failed;
+
+        /// <summary>この仲間に E が出ているか (ShopEquipCompare が同じ行で E の右に数字を置くために見る)。</summary>
+        internal static bool Shown(int member, int item)
+        {
+            return Enabled != null && Enabled.Value && !s_failed && item >= 0 && item < 255 && Equipped(member, item);
+        }
 
         private static bool Equipped(int member, int item)
         {

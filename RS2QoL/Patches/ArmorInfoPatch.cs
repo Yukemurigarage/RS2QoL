@@ -23,6 +23,7 @@ namespace RS2QoL.Patches
     /// どの画面で何が選ばれているかは、本体がその画面の「攻撃力 / 防御力」の文字を埋める関数の Postfix で拾う
     /// (持ち物・店 = item_power_disp(no, sso, id)、装備 = init_soubi / proc_soubi、装備の候補一覧 =
     /// init_soubi_3 / proc_soubi_3、預かり所 = item_mess_azukeru)。窓はその画面の SpriteStudio が生きている間だけ描く。
+    /// 窓は画面右端に置くが、店の画面だけは左の空きに置く (右は仲間の絵と ShopEquipCompare の +N / -N が使う)。
     /// </summary>
     internal static class ArmorInfo
     {
@@ -168,10 +169,15 @@ namespace RS2QoL.Patches
             // 上下は装備画面の品目欄 (武器: / 防具: の暗い角丸、仮想座標で上 161.5・下 467.5。画素で測った値) に揃え、見た目も同じ箱にする。
             // 行の高さは箱の高さから割り出す (行数は固定なので品物によらず同じ)
             float w = 112f * u, h = 306f * u;
-            float x = ox + (960f - 112f - 6f) * u, y = 161.5f * u;
+            // 店の画面 (1_b_1 / 1_b_2 / 1_c_1_Control) だけは左の空き (飾り模様と品物の一覧の間) に置く。右は仲間の絵と
+            // ShopEquipCompare の +N / -N が使っていて、窓と数字が重なるため。品物の一覧の箱の左端 (仮想 192) から 16 単位離して右端を揃え、
+            // 下端を箱の下端に合わせるため 1.5 単位上げる (画面写真で測った値。箱の上端は窓より上にあるので上端は合わせない)
+            bool shop = !string.IsNullOrEmpty(s_screen) && s_screen.StartsWith("1_");
+            float x = ox + (shop ? (192f - 16f - 112f) : (960f - 112f - 6f)) * u, y = (shop ? 160f : 161.5f) * u;
             float lineH = (h - pad * 2) / lines.Length;
             Rect r = new Rect(Mathf.Round(x), Mathf.Round(y), Mathf.Round(w), Mathf.Round(h));
-            UiParts.DrawDarkBox(r);
+            // 店では隣の品物の一覧の箱 (角の半径が大きい) に見た目を揃える。他の画面は装備画面の品目欄と同じ既定の半径
+            UiParts.DrawDarkBox(r, shop ? 18f : 12f);
             UiParts.Shadow = false;
             EnsureColors();
 
