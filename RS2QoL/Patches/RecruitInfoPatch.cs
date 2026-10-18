@@ -83,8 +83,11 @@ namespace RS2QoL.Patches
             public int[] Levels = new int[11];   // memberdata[24..34] の加入時の見込み (0 = 適性なし)
             public int Spark;                    // memberdata[103] 閃きタイプ
             public int Hp;                       // 加入時 HP の見込み (乱数の中央)。仲間なら最大 HP
-            public bool Member;                  // 仲間になっている人 (ステータス画面から)。レベルは今の値、HP は 今 / 最大
-            public int HpNow;                    // 仲間の今の HP
+            public bool Member;                  // 仲間になっている人 (ステータス画面から)。レベルは今の値、LP は 今 / 最大
+            public int Lp;                       // 最大 LP (npc_data / snpc_data の +4。生まれつきで変わらない)
+            public int LpNow;                    // 仲間の今の LP (memberdata[18])。候補は最大と同じ
+            // 「今の HP」は出さない: 本体は戦闘の開始 (Battle.reset_data) と終了 (Battle.revert_member) の両方で全員の HP を最大に戻すので、
+            // メニューで見る HP は常に最大と同じ値で「今 / 最大」に意味が無い (ユーザー 2026-10-18)。減って戻らないのは LP
             public string SparkText = "";
             public string Speech = "";           // 選択肢の前にこの人が言っていた台詞 (改行入り、最後の 4 行まで)
             public string[] SpeechLines;         // Speech を吹き出しの幅で折り返した行 (WrapSpeech の結果。幅か字の大きさが変わったら作り直す)
@@ -110,6 +113,7 @@ namespace RS2QoL.Patches
                 if (s == null || no + 43 > s.Length) return null;
                 obj = (id & 0xFF) + 32;
                 ReadStats(s, no + 1, f.Stats);
+                f.Lp = f.LpNow = s[no + 4] & 0xFF;   // snpc_data_set: +4 → memberdata[18] = [19]
                 f.Spark = s[no + 5] & 0xFF;
                 for (int i = 0; i < 11; i++) f.Levels[i] = s[no + 6 + i] & 0xFF;
                 if ((id & 0x1FF) == 258)
@@ -123,6 +127,7 @@ namespace RS2QoL.Patches
                 if (a == null || idx + 10 > a.Length) return null;
                 obj = id < 288 ? id >> 3 : ((id - 288) >> 3) + 203;
                 ReadStats(a, idx + 1, f.Stats);
+                f.Lp = f.LpNow = a[idx + 4] & 0xFF;   // npc_data_set: +4 → memberdata[18] = [19]
                 f.Spark = a[idx + 5] & 0xFF;
                 int bonus = a[idx + 8] & 0xFF;
                 // player_skil_set と同じ: 適性ビットを上位から枠 0.. に当て、立っている枠だけ パーティのレベル + 加算 − 7 (0 未満は 0、50 まで)
@@ -158,7 +163,7 @@ namespace RS2QoL.Patches
         /// 仲間になっている人 (Work.memberdata の 1 人分) から。能力 memberdata[128..133] は加入時に npc_data から写された値で、その後
         /// 書き換える処理は本体に無い (書くのは npc_data_set / snpc_data_set だけ。Menu 4787 は表示用に +10 して [97..102] へ写すだけ)。
         /// 同じクラスをもう一度誘うと次の人 (id + 1、8 人で一周。加入のたびに script の inc_flag_0to7 が flag 224+クラス を進める) が来るので、
-        /// 外して誘い直しても同じ人の数値が上がることはない。レベルは今の値 (memberdata[24..34])、HP は 今 [14] / 最大 [16]。
+        /// 外して誘い直しても同じ人の数値が上がることはない。レベルは今の値 (memberdata[24..34])、HP は最大 [16] だけ、LP は 今 [18] / 最大 [19]。
         /// </summary>
         private static Info BuildMember(int[] m)
         {
@@ -171,7 +176,8 @@ namespace RS2QoL.Patches
             for (int i = 0; i < 11; i++) f.Levels[i] = Mathf.Clamp(m[24 + i], 0, 50);
             f.Spark = m[103] & 0xFF;
             f.Hp = m[16];
-            f.HpNow = m[14];
+            f.LpNow = m[18];
+            f.Lp = m[19];
             try { f.Name = Main.menu.get_name(2, f.Id); } catch (Exception e) { Plugin.Log.LogWarning("[Recruit] name failed: " + e.Message); }
             f.Class = ClassName(obj);
             f.SparkText = SparkText(f.Spark);
@@ -500,7 +506,7 @@ namespace RS2QoL.Patches
             for (int i = 0; i < 6; i++) sb.Append(f.Stats[i]).Append(i < 5 ? "/" : "");
             sb.Append(" lv=");
             for (int i = 0; i < 11; i++) sb.Append(f.Levels[i]).Append(i < 10 ? "/" : "");
-            sb.Append(" spark=").Append(f.Spark).Append(f.Member ? " hp=" + f.HpNow + "/" : " hp~").Append(f.Hp).Append(" party=");
+            sb.Append(" spark=").Append(f.Spark).Append(f.Member ? " hp=" : " hp~").Append(f.Hp).Append(" lp=").Append(f.LpNow).Append('/').Append(f.Lp).Append(" party=");
             for (int i = 0; i < 11; i++) sb.Append(Work.partydata[385 + i]).Append(i < 10 ? "/" : "");
             sb.Append(" year=").Append(Work.partydata[686]);
             sb.Append(" speech=\"").Append(f.Speech.Replace("\n", "/")).Append('"');
@@ -574,7 +580,11 @@ namespace RS2QoL.Patches
 
         private static Font s_font;
         private static GUIStyle s_line, s_dim, s_title, s_box, s_hint, s_name, s_accent, s_head, s_center, s_speech;
+        private static GUIStyle s_radarName, s_radarNum;   // レーダーチャートの頂点: 能力名 (左寄せ) と 値 (2 桁の固定幅に右寄せ)
+        private static float s_radarNumW;                  // 値の欄の幅 (一番広い 2 桁の幅)。EnsureStyles で測り直す
         private static GUIStyle s_barLabel, s_barDim, s_barHead;
+        private static GUIStyle s_barNum, s_barNumDim;   // バー右の値: 2 桁の固定幅に右寄せ (レーダーチャートの値と同じ理由。ユーザー 2026-10-18)
+        private static float s_barNumW;
         private static int s_barFontBuilt = -1;
         private static Texture2D s_barTrack, s_barWeapon, s_barMagic;
         private static int s_fontSizeBuilt = -1;
@@ -849,7 +859,9 @@ namespace RS2QoL.Patches
                 UiParts.GameLabel(new Rect(titleX + nameW + fontSize, cy, headW - nameW - fontSize, nameH), f.Class, s_line);
             }
             UiParts.GameLabel(new Rect(titleX, cy + nameH, headW, lineH), "よくひらめく技:  " + f.SparkText, s_accent);
-            UiParts.GameLabel(new Rect(titleX, cy + nameH + lineH * 0.95f, headW, lineH), f.Member ? "HP  " + f.HpNow + " / " + f.Hp : "HP の見込み  約 " + f.Hp, s_line);
+            // HP は最大値だけ (今の値は戦闘のたびに最大に戻るので出す意味が無い)。LP は減って戻らないので 今 / 最大
+            UiParts.GameLabel(new Rect(titleX, cy + nameH + lineH * 0.95f, headW, lineH),
+                f.Member ? "HP  " + f.Hp + "    LP  " + f.LpNow + " / " + f.Lp : "HP の見込み  約 " + f.Hp + "    LP  " + f.Lp, s_line);
             cy += headH + lineH * 0.2f;
 
             // 本文: 左にレーダーチャート (能力 6 つ)、右に武器 / 術のレベルのバー
@@ -928,21 +940,26 @@ namespace RS2QoL.Patches
             //   それだけだと短い「魔力 13」が長い「器用さ 22」より内側に寄って見えたので、短い方だけ 1 画素 (1600x900 で) 外へずらす
             //   (幅の差の 1/2 = 中心を揃える は外に寄りすぎ、1/4 でもまだ寄りすぎだった。ユーザー 2026-10-18 の指定は「揃えた位置から 1 画素右」)
             float shortPx = Mathf.Max(1f, Mathf.Round(UiParts.Unit * 0.6f));
-            string[] texts = new string[6];
-            float[] widths = new float[6];
+            // 1 つの頂点の文字 = 能力名 (左寄せ) + 空白 + 値 (2 桁の固定幅に右寄せ)。以前は「器用さ 22」を 1 本の中央寄せで描いていたので、
+            // 数え上げで 9 → 10 と桁が増えた瞬間に能力名が半桁ぶん左へ動いた。欄を分け、値の欄を最初から 2 桁幅にして止める (ユーザー 2026-10-18)
+            float space = UiParts.GameTextWidth("0 0", s_radarNum) - UiParts.GameTextWidth("00", s_radarNum);
+            float numW = s_radarNumW;
+            float[] nameW = new float[6];
+            float[] widths = new float[6];   // 能力名 + 空白 + 値の欄 の全幅 (値は数え上げの途中でも最終値でも同じ幅)
             float maxL = 0f, maxR = 0f;
             for (int i = 0; i < 6; i++)
             {
                 int si = RADAR_ORDER[i];
-                texts[i] = STAT_NAMES[si] + " " + Mathf.RoundToInt((STAT_MIN + f.Stats[si]) * t);   // 数字は 0 から数え上げる (10 からではなく。ユーザー 2026-10-18)
+                nameW[i] = UiParts.GameTextWidth(STAT_NAMES[si], s_radarName);
+                widths[i] = nameW[i] + space + numW;
                 float dx = Mathf.Cos((-90f + 60f * i) * Mathf.Deg2Rad);
                 if (Mathf.Abs(dx) < 0.1f) continue;
-                widths[i] = UiParts.GameTextWidth(STAT_NAMES[si] + " " + (STAT_MIN + f.Stats[si]), s_center);   // 数字は最終値で測る (伸びる間に動かない)
                 if (dx < 0f) maxL = Mathf.Max(maxL, widths[i]); else maxR = Mathf.Max(maxR, widths[i]);
             }
             float gap = fontSize * 0.35f;
             for (int i = 0; i < 6; i++)
             {
+                int si = RADAR_ORDER[i];
                 float ang = (-90f + 60f * i) * Mathf.Deg2Rad;
                 float dx = Mathf.Cos(ang), dy = Mathf.Sin(ang);
                 float ly = ccy + dy * (radius + labelH * 0.6f);
@@ -951,7 +968,10 @@ namespace RS2QoL.Patches
                 if (dx < -0.1f) lx = vx - gap - (widths[i] < maxL - 0.5f ? shortPx : 0f) - widths[i] / 2f;
                 else if (dx > 0.1f) lx = vx + gap + (widths[i] < maxR - 0.5f ? shortPx : 0f) + widths[i] / 2f;
                 else lx = ccx;
-                UiParts.GameLabel(new Rect(lx - labelW / 2f, ly - labelH / 2f, labelW, labelH), texts[i], s_center);
+                float left = Mathf.Round(lx - widths[i] / 2f), top = ly - labelH / 2f;
+                string num = Mathf.RoundToInt((STAT_MIN + f.Stats[si]) * t).ToString();   // 数字は 0 から数え上げる (10 からではなく。ユーザー 2026-10-18)
+                UiParts.GameLabel(new Rect(left, top, nameW[i] + space, labelH), STAT_NAMES[si], s_radarName);
+                UiParts.GameLabel(new Rect(left + nameW[i] + space, top, numW, labelH), num, s_radarNum);
             }
         }
 
@@ -966,6 +986,10 @@ namespace RS2QoL.Patches
                 s_barFontBuilt = barFont;
                 s_barLabel = new GUIStyle(s_line); s_barLabel.fontSize = barFont;
                 s_barDim = new GUIStyle(s_dim); s_barDim.fontSize = barFont;
+                s_barNum = new GUIStyle(s_barLabel); s_barNum.alignment = TextAnchor.MiddleRight;
+                s_barNumDim = new GUIStyle(s_barDim); s_barNumDim.alignment = TextAnchor.MiddleRight;
+                s_barNumW = 0f;
+                for (int d = 0; d < 10; d++) s_barNumW = Mathf.Max(s_barNumW, UiParts.GameTextWidth(d.ToString() + d, s_barNum));
                 s_barHead = new GUIStyle(s_head); s_barHead.fontSize = barFont + 1;
                 UiParts.ResetStyles();
             }
@@ -1003,7 +1027,8 @@ namespace RS2QoL.Patches
             }
             GUI.color = col;
             int shown = Mathf.RoundToInt(level * t);
-            UiParts.GameLabel(new Rect(track.xMax + fontSize * 0.4f, cy, valueW, rowH), level > 0 ? shown.ToString() : "－", level > 0 ? s_barLabel : s_barDim);
+            // 値は 2 桁の固定幅に右寄せ。伸びる途中で 9 → 10 になっても一の位の列が動かない (レーダーチャートと同じ。ユーザー 2026-10-18)
+            UiParts.GameLabel(new Rect(track.xMax + fontSize * 0.4f, cy, Mathf.Min(valueW, s_barNumW), rowH), level > 0 ? shown.ToString() : "－", level > 0 ? s_barNum : s_barNumDim);
         }
 
         private static string Lv(int v) { return v > 0 ? v.ToString() : "－"; }
@@ -1224,6 +1249,13 @@ namespace RS2QoL.Patches
             s_center = new GUIStyle(s_line);
             s_center.alignment = TextAnchor.MiddleCenter;
             s_center.fontSize = Mathf.Max(10, fontSize - 2);
+            s_radarName = new GUIStyle(s_center);
+            s_radarName.alignment = TextAnchor.MiddleLeft;
+            s_radarNum = new GUIStyle(s_center);
+            s_radarNum.alignment = TextAnchor.MiddleRight;
+            // 値の欄は一番広い 2 桁 ("00".."99" の同じ数字の並び) の幅にする。数え上げの途中 (1 桁) でも欄の幅が変わらず、能力名が動かない (ユーザー 2026-10-18)
+            s_radarNumW = 0f;
+            for (int d = 0; d < 10; d++) s_radarNumW = Mathf.Max(s_radarNumW, UiParts.GameTextWidth(d.ToString() + d, s_radarNum));
             s_speech = new GUIStyle(s_line);
             s_speech.fontSize = Mathf.Max(10, fontSize - 2);
             s_speech.normal.textColor = new Color(60f / 255f, 49f / 255f, 39f / 255f);   // 本体の会話窓の文字の焦げ茶
