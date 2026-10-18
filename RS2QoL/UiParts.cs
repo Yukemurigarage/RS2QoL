@@ -436,6 +436,75 @@ namespace RS2QoL
         public static void ResetStyles()
         {
             s_shadowStyles.Clear();
+            s_gameStyles.Clear();
+        }
+
+        // ---------------------------------------------------------------- 本体のフォントで描く
+
+        private static readonly Dictionary<GUIStyle, GUIStyle[]> s_gameStyles = new Dictionary<GUIStyle, GUIStyle[]>();
+
+        /// <summary>本体のメニュー・会話と同じフォント (GS.m_font[0] = Resources の Fonts/UDTypos512)。読めていなければ null。</summary>
+        public static Font GameFont()
+        {
+            try
+            {
+                Font[] fonts = GS.m_font;
+                if (fonts != null && fonts.Length > 0 && fonts[0] != null && fonts[0].fontSize > 0) return fonts[0];
+            }
+            catch { }
+            return null;
+        }
+
+        /// <summary>style の文字の大きさ (fontSize) に合わせた、本体のフォント用の倍率とスタイル (本体 / 影)。</summary>
+        private static GUIStyle[] GameStyles(GUIStyle style, Font f)
+        {
+            GUIStyle[] gs;
+            if (s_gameStyles.TryGetValue(style, out gs)) return gs;
+            // 本体のフォントは固定サイズのビットマップで fontSize が効かない (ArmorInfo と同じ)。fontStyle (太字) も効かないので描く側で重ねる
+            GUIStyle main = new GUIStyle(style) { font = f, fontSize = 0, fontStyle = FontStyle.Normal, clipping = TextClipping.Overflow, wordWrap = false };
+            GUIStyle sh = new GUIStyle(main);
+            sh.normal.textColor = new Color(0f, 0f, 0f, 0.8f);
+            gs = new[] { main, sh };
+            s_gameStyles[style] = gs;
+            return gs;
+        }
+
+        /// <summary>
+        /// Label と同じだが本体のフォントで描く。style の fontSize を画面上の文字の大きさとし、GUI.matrix で縮めて合わせる。
+        /// style が太字なら 1 画素ずらして 2 回描いて太くする。本体のフォントが取れなければ Label (OS フォント)。
+        /// </summary>
+        public static void GameLabel(Rect r, string text, GUIStyle style)
+        {
+            Font f = GameFont();
+            if (f == null || style.fontSize <= 0) { Label(r, text, style); return; }
+            GUIStyle[] gs = GameStyles(style, f);
+            float sc = style.fontSize / (float)f.fontSize;
+            Matrix4x4 old = GUI.matrix;
+            GUI.matrix = Matrix4x4.Scale(new Vector3(sc, sc, 1f)) * old;
+            Rect sr = new Rect(r.x / sc, r.y / sc, r.width / sc, r.height / sc);
+            float px = 1f / sc;                                   // 画面の 1 画素
+            bool bold = style.fontStyle == FontStyle.Bold;
+            if (Shadow)
+            {
+                float o = Mathf.Max(1f, Mathf.Round(Unit * 0.75f)) * px;
+                GUI.Label(new Rect(sr.x + o, sr.y + o, sr.width, sr.height), text, gs[1]);
+                if (bold) GUI.Label(new Rect(sr.x + o + px, sr.y + o, sr.width, sr.height), text, gs[1]);
+            }
+            if (bold) GUI.Label(new Rect(sr.x + px, sr.y, sr.width, sr.height), text, gs[0]);
+            GUI.Label(sr, text, gs[0]);
+            GUI.matrix = old;
+        }
+
+        /// <summary>GameLabel で描いた時の文字列の幅 (画面の画素)。本体のフォントが取れなければ style で測る。</summary>
+        public static float GameTextWidth(string text, GUIStyle style)
+        {
+            Font f = GameFont();
+            if (f == null || style.fontSize <= 0) return style.CalcSize(new GUIContent(text)).x;
+            GUIStyle[] gs = GameStyles(style, f);
+            float sc = style.fontSize / (float)f.fontSize;
+            float w = gs[0].CalcSize(new GUIContent(text)).x * sc;
+            if (style.fontStyle == FontStyle.Bold) w += 1f;
+            return w;
         }
 
         /// <summary>本体のメニューと同じ効果音 (212 = カーソル移動、213 = 決定、211 = キャンセル)。</summary>

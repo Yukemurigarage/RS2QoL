@@ -51,9 +51,9 @@ namespace RS2QoL.Patches
         // 行 (カーソルが乗るのは ROW_FLOOR 以降。ROW_CLOSE は右下の とじる ボタン)
         private const int ROW_TREASURY = 0, ROW_MONEY = 1, ROW_FLOOR = 2, ROW_WITHDRAW = 3, ROW_DEPOSIT = 4, ROW_CLOSE = 5;
         private const int ROWS = 5;               // 枠の中に描く行数 (とじる は除く)
-        private const int PAGE_TREASURY = 0, PAGE_WEIGHT = 1, PAGES = 2;
-        private const float WEIGHT_ROW = 1.5f;    // 体重計のページの 1 人分の最低の高さ (行の高さの倍数。実際は WeightRowH = 兵士と同じ大きさの絵が入る高さ)
-        private static readonly string[] PAGE_TITLES = { "どこでも大臣", "どこでも体重計" };
+        private const int PAGE_TREASURY = 0, PAGE_WEIGHT = 1, PAGE_CHARM = 2, PAGES = 3;
+        private const float WEIGHT_ROW = 1.5f;    // 体重計・理力計のページの 1 人分の最低の高さ (行の高さの倍数。実際は WeightRowH = 兵士と同じ大きさの絵が入る高さ)
+        private static readonly string[] PAGE_TITLES = { "どこでも大臣", "どこでも体重計", "どこでも理力計" };
         private static int s_page = PAGE_TREASURY;
         private static int s_cursorTreasury = ROW_WITHDRAW;   // 体重計のページから戻った時に戻すカーソル
         private static bool s_prevLB, s_prevRB;   // 開いている間のページ送り (物理 LB / RB の押下エッジ)
@@ -447,7 +447,7 @@ namespace RS2QoL.Patches
             int dot = MinisterDot;
             float spr = dot * FRAME;
             Rect sprR = new Rect(cx, cy + headH - spr - 10f, spr, spr);    // 足元を見出しの下端に合わせる (10 px だけ上に: 下端に付くと窮屈に見える)
-            if (s_page == PAGE_WEIGHT) DrawGuard(sprR); else DrawMinister(sprR);
+            if (s_page != PAGE_TREASURY) DrawGuard(sprR); else DrawMinister(sprR);   // 体重計・理力計は倉庫の前の兵士 (理力計の NPC の絵は未確認なので兵士で代用)
             float titleX = s_minister != null ? cx + spr + fontSize * 0.5f : cx;
             UiParts.Label(new Rect(titleX, cy, cw - (titleX - cx), headH), PAGE_TITLES[s_page], s_title);
             // 見出しの右端にページ: [L] 1 / 2 [R] (設定画面と同じ本体の L / R ボタンの絵。クリックでも送れる)
@@ -477,6 +477,10 @@ namespace RS2QoL.Patches
             {
                 cy = DrawWeightPage(cx, cy, cw, lineH, fontSize, members);
             }
+            else if (s_page == PAGE_CHARM)
+            {
+                cy = DrawCharmPage(cx, cy, cw, lineH, fontSize, members);
+            }
             else
             for (int i = 0; i < ROWS; i++)
             {
@@ -500,11 +504,13 @@ namespace RS2QoL.Patches
                 if (selectable && i != ROW_FLOOR && UiParts.ClickArea(r)) { s_cursor = i; Activate(i); }
                 cy += lineH;
             }
-            if (s_page != PAGE_WEIGHT) cy += bodyH - ROWS * lineH;   // 体重計のページと同じ位置に結果の文を置く
+            if (s_page == PAGE_TREASURY) cy += bodyH - ROWS * lineH;   // 体重計・理力計のページと同じ位置に結果の文を置く
             cy += lineH * 0.3f;
 
             // 結果の文 (引き出した / 預けた / できない理由) は幅いっぱいの 1 行。入らなければ文字を小さくする (折り返して切れないように)
-            string note = s_page == PAGE_WEIGHT ? "戦闘では防具の重さ ÷ 2 (切り捨て) を素早さから引く (武器の重さは効かない)。ステータス画面の小さい数字 (+N / －N) がその増減" : s_status;
+            string note = s_page == PAGE_WEIGHT ? "戦闘では防具の重さ ÷ 2 (切り捨て) を素早さから引く (武器の重さは効かない)。ステータス画面の小さい数字 (+N / －N) がその増減"
+                : s_page == PAGE_CHARM ? "攻撃術の威力 = 魔力 + (魔力 − 理力) × 2 (理力が魔力以上なら魔力のまま)。ヘルファイア等の冥術とペインは逆に理力で強くなる"
+                : s_status;
             if (note.Length > 0) UiParts.Label(new Rect(cx, cy, cw, lineH), note, FitStyle(s_status_style, note, cw, ref s_statusFit, ref s_statusFitKey));
             cy += lineH;
 
@@ -519,7 +525,7 @@ namespace RS2QoL.Patches
             if (!UiParts.DrawCloseButton(btnR)) UiParts.Label(btnR, "[ とじる ]", s_center);
             if (closeSel) DrawHand(btnR.x, btnR.y + btnR.height / 2f, lineH);
             if (UiParts.ClickArea(btnR)) Close();
-            string foot = s_page == PAGE_WEIGHT
+            string foot = s_page != PAGE_TREASURY
                 ? "LB / RB: ページ  決定・キャンセル・Esc: 閉じる (ポーズは残る)"
                 : "十字キー: 移動  左右: 変更  決定: 実行  LB / RB: ページ  キャンセル・Esc・とじる: 閉じる (ポーズは残る)";
             UiParts.Label(new Rect(cx, footY, cw, footH), foot, FitStyle(s_footer, foot, cw, ref s_footerFit, ref s_footerFitKey));
@@ -559,6 +565,48 @@ namespace RS2QoL.Patches
             }
             return cy;
         }
+
+        /// <summary>
+        /// 理力計のページ: 列の見出し 1 行 + 仲間ごとに WEIGHT_ROW 行 (左に歩きの絵、名前、右に 理力 / 魔力 / 攻撃術の威力の倍率)。
+        /// 理力・魔力は防具の上昇込み (戦闘で使われる値。本体の理力計の数字と同じ)。倍率は Battle.damage07 の (魔力 + (魔力 − 理力) × 2) ÷ 魔力。
+        /// 戻り値は描き終えた y。
+        /// </summary>
+        private static float DrawCharmPage(float cx, float cy, float cw, float lineH, int fontSize, int members)
+        {
+            float colW1 = fontSize * 4.5f, colW2 = fontSize * 4.5f, colW3 = fontSize * 7f;
+            float x3 = cx + cw - colW3, x2 = x3 - colW2, x1 = x2 - colW1;
+            float rowH = WeightRowH(lineH);
+            int dot = MinisterDot;
+            float spr = dot * PartyWeightFrame;
+            float nameX = cx + spr + fontSize * 0.5f;
+
+            UiParts.Label(new Rect(nameX, cy, x1 - nameX, lineH), "名前", s_lineDim);
+            UiParts.Label(new Rect(x1, cy, colW1, lineH), "理力", s_rightDim);
+            UiParts.Label(new Rect(x2, cy, colW2, lineH), "魔力", s_rightDim);
+            UiParts.Label(new Rect(x3, cy, colW3, lineH), "攻撃術の威力", s_rightDim);
+            cy += lineH;
+
+            bool log = !s_charmLogged;
+            s_charmLogged = true;
+            for (int i = 0; i < members; i++)
+            {
+                int[] m = Work.memberdata[i];
+                int charm = PartyWeight.MenuCharm(m), mag = PartyWeight.MenuMagic(m);
+                float ratio = PartyWeight.SpellRatio(m);
+                string ratioText = "×" + ratio.ToString("0.0");
+                Texture2D t = PartyWeight.MemberFrame(i);
+                if (t != null) DrawFrame(new Rect(cx, cy + Mathf.Round((rowH - spr) / 2f), spr, spr), t);
+                UiParts.Label(new Rect(nameX, cy, x1 - nameX, rowH), PartyWeight.MemberName(i), s_line);
+                UiParts.Label(new Rect(x1, cy, colW1, rowH), charm.ToString(), s_right);
+                UiParts.Label(new Rect(x2, cy, colW2, rowH), mag.ToString(), s_right);
+                UiParts.Label(new Rect(x3, cy, colW3, rowH), ratioText, s_right);
+                if (log) Plugin.Log.LogInfo("[Weight] applied: charm page member " + i + " charm " + charm + " (base " + PartyWeight.BaseCharm(m) + ") magic " + mag + " spell " + ratioText);
+                cy += rowH;
+            }
+            return cy;
+        }
+
+        private static bool s_charmLogged;   // 理力計のページの数字を初回だけログに出す (本体の理力計と突き合わせる用)
 
         private const int PartyWeightFrame = FRAME;
 

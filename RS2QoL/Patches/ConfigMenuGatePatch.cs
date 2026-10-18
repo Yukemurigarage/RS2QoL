@@ -14,6 +14,7 @@ namespace RS2QoL.Patches
         {
             GameSpeed.HandleToggleButton();
             __result = ConfigMenu.Tick(__result);
+            __result = RecruitInfo.Tick(__result);   // 仲間候補のステータスの窓: 開いている間は入力を奪う
         }
     }
 }

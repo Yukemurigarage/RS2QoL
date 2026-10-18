@@ -72,7 +72,13 @@ namespace RS2QoL.Patches
         /// 防具の素早さの上昇の合計 (Battle.calc_bonus と同じ: armor_data[+10] の bit 0x08 が素早さ、量は (下位 2 bit) + 1。盾には無い)。
         /// memberdata[101] は本体がメニューを開いた時 (Menu.menu_init) にしか組み直さないので、そこは見ずにここで足す。
         /// </summary>
-        public static int ArmorAgilityBonus(int[] m)
+        public static int ArmorAgilityBonus(int[] m) { return ArmorBonus(m, 0x08); }
+
+        /// <summary>
+        /// 防具の能力値上昇の合計 (Battle.calc_bonus と同じ: armor_data[+10] の bit が能力値 (0x80 腕力 / 0x40 器用さ / 0x20 魔力 / 0x10 理力 / 0x08 素早さ / 0x04 体力)、
+        /// 量は (下位 2 bit) + 1。盾には無い)。
+        /// </summary>
+        public static int ArmorBonus(int[] m, int bit)
         {
             int b = 0;
             for (int s = 0; s < SLOTS; s++)
@@ -80,13 +86,40 @@ namespace RS2QoL.Patches
                 int item = m[SLOT_FIRST + s];
                 if (item < ARMOR_FIRST || item >= SHIELD_FIRST) continue;
                 int f = Data.armor_data[(item - ARMOR_FIRST) * ARMOR_STRIDE + 10] & 0xFF;
-                if ((f & 0x08) != 0) b += (f & 3) + 1;
+                if ((f & bit) != 0) b += (f & 3) + 1;
             }
             return b;
         }
 
         /// <summary>装備の上昇を足した素早さ (本体の memberdata[101] に当たる値。重さは引いていない)。</summary>
         public static int MenuAgility(int[] m) { return BaseAgility(m) + ArmorAgilityBonus(m); }
+
+        // ---- 理力計 (理力 = SFC 版以来の俗称「魅力」。本体の文章では「理力」だけ。ステータス画面に出ない隠しの能力値 memberdata[131] (素質) → 戦闘では [100] = 素質 + 10 + 防具の上昇) ----
+        // 本体の理力計 (Core.appnew_ivent 命令 1、術法研究所の器具) は 素質 + 10 + 防具の上昇 (bit 0x10) を 99 で頭打ちにして出す。
+        // 戦闘 (Battle.cs) で理力が効く所:
+        //   攻撃術の威力 (damage07) = (魔力 + (魔力 − 理力) × 2) × 技の倍率 / 4 … 理力 ≥ 魔力 なら魔力のまま。つまり理力が魔力より低いほど強い
+        //   冥術 ヘルファイア / ポイゾナスブロウ / サンドストーム (damage13) = (魔力 + 理力) × …、ペイン (damage10) = 理力 × … は逆に理力で強くなる
+        //   吸収技 (サクション / 吸血 / 体力吸収) と LP 吸収 (ライフスティール / 死神のカマ / 黒点破) の命中に理力を足す。即死・石化への抵抗にも理力
+        private const int BASE_MAGIC = 130, BASE_CHARM = 131;
+
+        /// <summary>素の理力 (素質 + 10)。</summary>
+        public static int BaseCharm(int[] m) { return m[BASE_CHARM] + 10; }
+        /// <summary>防具の上昇を足した理力 (戦闘で使われる値。本体の理力計はこれを 99 で頭打ちにして出す)。</summary>
+        public static int MenuCharm(int[] m) { return BaseCharm(m) + ArmorBonus(m, 0x10); }
+        /// <summary>防具の上昇を足した魔力 (戦闘で使われる値。memberdata[99] はメニューを開いた時にしか組み直されないので自分で足す)。</summary>
+        public static int MenuMagic(int[] m) { return m[BASE_MAGIC] + 10 + ArmorBonus(m, 0x20); }
+        /// <summary>攻撃術の威力の基礎値 (Battle.damage07 の 魔力 + (魔力 − 理力) × 2。理力 ≥ 魔力 なら魔力)。</summary>
+        public static int SpellBase(int[] m)
+        {
+            int mag = MenuMagic(m), charm = MenuCharm(m);
+            return mag + (mag >= charm ? (mag - charm) * 2 : 0);
+        }
+        /// <summary>攻撃術の威力が魔力だけの時の何倍か (1.0 = 補正なし)。表示用。</summary>
+        public static float SpellRatio(int[] m)
+        {
+            int mag = MenuMagic(m);
+            return mag > 0 ? (float)SpellBase(m) / mag : 1f;
+        }
         /// <summary>戦闘で使われる素早さ (Battle.calc_ability と同じ: 重さ ÷ 2 を引いて 0 未満は 0)。</summary>
         public static int BattleAgility(int[] m) { return Mathf.Max(0, MenuAgility(m) - Weight(m) / 2); }
 
@@ -169,6 +202,63 @@ namespace RS2QoL.Patches
             catch (Exception e)
             {
                 Plugin.Log.LogWarning("[Weight] image failed (obj " + obj + "): " + e.Message);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// BuildFrontFrame と同じ帯から、コマ番号 pats (x = 番号 × 26) のコマを順に Texture2D にする (仲間候補の窓の「回って構える」動き用)。
+        /// 帯に無い番号は null。帯が組めなければ null。
+        /// </summary>
+        public static Texture2D[] BuildFrames(int obj, int pal, int[] pats, string name)
+        {
+            const int FRAME = 26;
+            try
+            {
+                obj &= 0xFF;
+                int no = obj > 230 ? 0 : obj;
+                ImageEfx efx = new ImageEfx();
+                efx.init(4, no, 16);
+                Data.setObjPalette(efx, obj, pal);
+                efx.storeImage();
+                Image img = efx.img;
+                if (img == null || img.m_px == null || img.m_palette == null || img.m_height < FRAME)
+                {
+                    Plugin.Log.LogWarning("[Weight] image unavailable (obj " + obj + ")");
+                    return null;
+                }
+                int w = img.m_width;
+                Texture2D[] frames = new Texture2D[pats.Length];
+                for (int p = 0; p < pats.Length; p++)
+                {
+                    int x0 = pats[p] * FRAME;
+                    if (x0 < 0 || x0 + FRAME > w) continue;
+                    Texture2D t = new Texture2D(FRAME, FRAME, TextureFormat.ARGB32, false);
+                    t.name = name + pats[p];
+                    t.hideFlags = HideFlags.HideAndDontSave;
+                    t.filterMode = FilterMode.Point;
+                    t.wrapMode = TextureWrapMode.Clamp;
+                    Color32[] pix = new Color32[FRAME * FRAME];
+                    for (int y = 0; y < FRAME; y++)
+                    {
+                        for (int x = 0; x < FRAME; x++)
+                        {
+                            int idx = img.m_px[y * w + x0 + x];
+                            Color32 c = img.m_palette[idx];
+                            if (idx == 0) c.a = 0;
+                            pix[(FRAME - 1 - y) * FRAME + x] = c;
+                        }
+                    }
+                    t.SetPixels32(pix);
+                    t.Apply();
+                    frames[p] = t;
+                }
+                efx.killImage();
+                return frames;
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning("[Weight] frames failed (obj " + obj + "): " + e.Message);
                 return null;
             }
         }

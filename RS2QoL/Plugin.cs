@@ -31,6 +31,10 @@ namespace RS2QoL
 
             DiagEnabled = Config.Bind("Diagnostics", "Enabled", false,
                 "入力の診断ログ ([Pad]/[Key]/[Field]/[MARK]) を出す。調査が終わったら false にする");
+            Patches.InputDiag.ToggleKey = Config.Bind("Diagnostics", "ToggleKey", UnityEngine.KeyCode.F8,
+                "診断ログを ON/OFF するキーボードのキー (None で無し)。OFF にした時はログを BepInEx\\RS2QoL-diag\\ に取り分けてそのフォルダを開く");
+            Patches.InputDiag.MarkKey = Config.Bind("Diagnostics", "MarkKey", UnityEngine.KeyCode.F7,
+                "診断ログに目印 ([MARK]) を書くキーボードのキー (None で無し)。パッドの Start+Select と同じ");
 
             DiagonalPolicy = Config.Bind("Input", "DiagonalPolicy", Patches.DiagonalPolicy.Keep,
                 "斜め入力の扱い。Keep=今の方向を維持し単独方向になったら転換 (親指のブレに強い) / Newest=新しく押した方向へ即転換");
@@ -130,6 +134,10 @@ namespace RS2QoL
             Patches.TitleSkip.Bind(Config);
             // 防具・盾の詳しい防御力 (8 種・特性・耐性・重さ) を持ち物・装備・店・預かり所で出す ([Menu] ArmorDetail、既定 On)
             Patches.ArmorInfo.Bind(Config);
+            // 仲間にするかの 2 択に「ステータスを見る」を足し、候補の能力・適性・ひらめきの傾向を窓で見せる ([Recruit] StatusOption、既定 On)
+            Patches.RecruitInfo.Bind(Config);
+            // 会話の選択肢でキャンセルボタンを「いいえ」側 (最後の行) の決定にする ([Dialogue] CancelPicksDecline、既定 On)
+            Patches.DialogueCancel.Bind(Config);
             // 敵が強くなる速さ (戦闘回数カウンタの進み方) を % で調整・一時停止 ([Growth]、既定 100% = 本体どおり)
             Patches.EnemyGrowth.Bind(Config);
             // 味方の成長 (HP / 技レベル / 術レベル / 全体レベル) の速さを % で調整 ([PlayerGrowth]、既定 100% = 本体どおり)
@@ -149,6 +157,7 @@ namespace RS2QoL
             var harmony = new Harmony(MyPluginInfo.PLUGIN_GUID);
             harmony.PatchAll();
             Logger.LogInfo("Harmony patches applied");
+            Logger.LogInfo("[TitleSkip] patched: InputManager.GetMenuInput (AnyButtonSkip=" + Patches.TitleSkip.AnyButton.Value + ")");
             Logger.LogInfo("[MessageSpeed] patched: Core.message_lop (MessageSpeed=" + Patches.MessageSpeed.Mode.Value + ")");
             Logger.LogInfo("[AutoDash] patched: Core.move_human_sub_r (AutoDash=" + Patches.AutoDash.Enabled.Value + ")");
             Logger.LogInfo("[MonsterAnim] patched: Effect.draw / SSObject.Update (MonsterAnimRealtime=" + Patches.MonsterAnim.Enabled.Value + ")");
@@ -176,6 +185,7 @@ namespace RS2QoL
         // 画面モードの適用 (Screen.SetResolution の反映を待ってから枠を変える)
         private void Update()
         {
+            Patches.InputDiag.UpdateHotkey();
             Patches.WindowMode.Update();
             Patches.MouseCursor.Update();
         }
@@ -190,7 +200,14 @@ namespace RS2QoL
         // ウィンドウの × で閉じると最後の数秒分 (調べたい部分) が LogOutput.log に残らないことがある
         private void OnApplicationQuit()
         {
+            Patches.InputDiag.OnQuit();
             Patches.DisplaySync.Shutdown();
+            FlushLog();
+        }
+
+        /// <summary>BepInEx のログファイルを今すぐ書き切る (DiskLogListener は 2 秒ごとにまとめて書く)。終了時と診断ログの複製の前に。</summary>
+        internal static void FlushLog()
+        {
             foreach (ILogListener l in BepInEx.Logging.Logger.Listeners)
             {
                 DiskLogListener d = l as DiskLogListener;
@@ -210,9 +227,11 @@ namespace RS2QoL
         private void OnGUI()
         {
             Patches.GameSpeed.DrawIndicator();
+            Patches.InputDiag.DrawBadge();
             Patches.Wallet.DrawNotice();
             Patches.ArmorInfo.Draw();
             Patches.TreasuryScreen.Draw();
+            Patches.RecruitInfo.Draw();
             ConfigMenu.Draw();
             Patches.SoftReset.Draw();
         }

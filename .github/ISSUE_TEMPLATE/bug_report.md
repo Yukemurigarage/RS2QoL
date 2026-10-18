@@ -24,9 +24,10 @@ assignees: ''
 - 他に入れている BepInEx プラグイン: (無ければ「無し」)
 
 ## ログ
-`BepInEx\config\net.my-p.rs2qol.cfg` の `[Diagnostics] Enabled = true` にしてゲームを起動し、現象を再現した直後に
-ゲームパッドの **Start と Select を同時押し** (ログに目印が入ります) してからゲームを閉じ、
-`BepInEx\LogOutput.log` をここに添付 (ドラッグ & ドロップ) してください。
+MOD 設定画面 (フィールドで Start のポーズ中、またはタイトル画面の NEW GAME / CONTINUE で L3。キーボードは F1) の「その他」ページで
+**「診断ログを出す」を ON** にし (キーボードなら F8。または `BepInEx\config\net.my-p.rs2qol.cfg` の `[Diagnostics] Enabled = true`)、現象を再現した直後に
+ゲームパッドの **Start と Select を同時押し** (キーボードなら **F7**。ログに目印が入ります) してから、診断ログを OFF にするかゲームを閉じてください。
+ログが `BepInEx\RS2QoL-diag\` に取り分けられてそのフォルダがエクスプローラで開くので、そこの `RS2QoL-diag_<起動日時>.log` をここに添付 (ドラッグ & ドロップ) してください (ファイルは起動ごとに 1 つで、同じ起動の中で OFF を繰り返すと同じファイルが更新されます)。
 
 ## 設定ファイル (あれば)
 `BepInEx\config\net.my-p.rs2qol.cfg` を添付してください (既定のままなら不要)。

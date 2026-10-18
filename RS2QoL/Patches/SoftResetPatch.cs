@@ -166,6 +166,20 @@ namespace RS2QoL.Patches
             ConfigMenu.GuardUntilReleased();
         }
 
+        /// <summary>
+        /// タイトル放置後の自動デモの戦闘中など、本体が Start を見ていない場面から確認なしで強制的に片付けてタイトルへ (TitleSkip.HandleDemo から)。
+        /// Begin の ForceReset と同じ経路: 次の Core.sync の先頭で ForceTeardown → reset()。
+        /// </summary>
+        public static bool ForceToTitle(string why)
+        {
+            if (!CanStart() || Active) return false;
+            Plugin.Log.LogInfo("[Reset] force to title: " + why);
+            s_goAfterRelease = true;
+            SetPhase(Phase.ForceReset);
+            ConfigMenu.GuardUntilReleased();
+            return true;
+        }
+
         /// <summary>キャンセル (いいえ): カーソル音で閉じ、ポーズ中なら解除して終わる (自動でかけたポーズを残さない)。</summary>
         private static void Cancel()
         {

@@ -161,7 +161,7 @@ namespace RS2QoL
                 Activate = () => { KeyMap.ResetToDefault(); s_status = "既定に戻しました"; },
             });
             p.Items.Add(new Item { Label = "方向は W A S D と矢印キー (固定)", Selectable = false });
-            p.Items.Add(new Item { Label = "F1 は設定画面、Esc は終了ダイアログ (固定)", Selectable = false });
+            p.Items.Add(new Item { Label = "F1 は設定画面、Esc は終了ダイアログ、F8 は診断ログの ON/OFF、F7 はその目印 (固定)", Selectable = false });
 
             p = AddPage("音量");
             AddPercent(p, "全体", AudioVolume.Master);
@@ -336,6 +336,9 @@ namespace RS2QoL
             p = AddPage("会話");
             AddToggle(p, "会話送りはボタンを押すまで待つ", DialogueAdvance.WaitForPress);
             AddToggle(p, "十字キーでも会話を送る", DialogueAdvance.AdvanceByDpad);
+            AddToggle(p, "仲間にするかの 2 択に「ステータスを見る」を足す", RecruitInfo.Enabled);
+            AddToggle(p, "会話の選択肢でキャンセルを「いいえ」側 (最後の行) にする", DialogueCancel.Enabled);
+            AddToggle(p, "ステータス画面で決定を押すと仲間のステータス窓を開く", RecruitInfo.PartyStatus);
             p.Items.Add(new Item
             {
                 Label = "会話の文字送りの速さ (本体のまま以外は倍速でも同じ)",
@@ -646,6 +649,16 @@ namespace RS2QoL
             AddToggle(p, "店で E の仲間が回って構える", ShopEquipSpin.Enabled);
             AddToggle(p, "ステータスの素早さを防具の重さを引いた戦闘の値に", PartyWeight.StatusEnabled);
             AddToggle(p, "ポーズの窓に MOD 設定画面の開き方を出す", PauseHint.Enabled);
+            // 不具合報告用の診断ログ。cfg を手で書き換えなくても設定画面から ON にできるように (利用者からの指摘 2026-10-18)。
+            // [Diagnostics] Enabled は各パッチが毎回 Value を読むので即時に効く (フリーズ監視だけは起動時に ON だった時のみ)
+            Item diag = AddToggle(p, "診断ログを出す (不具合報告用)", Plugin.DiagEnabled);
+            if (diag != null)
+            {
+                // 切り替えた瞬間から効く。どこに記録されるかを画面の下の行とログに出す (起動のたびに上書きされることも)
+                Action onDiag = () => { s_status = InputDiag.SetEnabled(!Plugin.DiagEnabled.Value, "menu"); };
+                diag.Left = onDiag; diag.Right = onDiag; diag.Activate = onDiag;
+            }
+            p.Items.Add(new Item { Label = "  再現の直後に Start+Select か F7 で目印を記録", Selectable = false });
             p.Items.Add(new Item
             {
                 Label = "ソフトリセット (タイトル画面に戻る)",
@@ -913,6 +926,9 @@ namespace RS2QoL
             Plugin.Log.LogInfo("[Config] close");
         }
         /// <summary>全ボタンが離されるまでゲームにボタンを渡さない (MOD 側の画面を閉じた直後の押しっぱなし対策)。</summary>
+        /// <summary>設定画面が開いていれば下の案内の行に出す (F8 の診断ログの切り替えなど、画面の外からの操作の結果)。</summary>
+        internal static void SetStatus(string s) { if (IsOpen) s_status = s; }
+
         public static void GuardUntilReleased()
         {
             s_closeGuard = true;
@@ -939,6 +955,7 @@ namespace RS2QoL
             QuitGame.HandleButton();
             Wallet.HandleButton();
             TreasuryScreen.HandleButton();
+            TitleSkip.HandleDemo(key); // タイトル放置後の自動デモの戦闘中など: A/B/X/Y/Start で強制的にタイトルへ
             // 本体のポーズの開始 / 解除に効果音 (本体は無音)。MOD の画面が自分でポーズをかける流れ (どこでも大臣・終了・ソフトリセット・F1 の設定画面) では
             // 鳴らさず、その画面の開閉の音 (開く = 決定音、閉じる = カーソル音) だけにする
             FieldPause.TrackSound(TreasuryScreen.Active || QuitGame.Active || SoftReset.Active || F1PauseBusy);
@@ -1363,8 +1380,13 @@ namespace RS2QoL
             }
 
             // ボタンの段の左: 状態メッセージ (既定に戻しました 等) と、まだ下に行がある印
+            // 状態メッセージ (既定に戻しました / 診断ログの保存先 等)。ボタンの左に置くと長い文がボタンに被る (ユーザー指摘 2026-10-18、
+            // docs/shindanlog5.png) ので、ページの最後の行の枠が空いている時 (行数が visible より少ない短いページ) はその空いた行に全幅・
+            // 折り返し無しで出す。行が埋まっているページでは従来どおりボタンの左 (短い文しか出ない)。▼ はボタンの左の行の右端
             float statW = cw - btnsW - fontSize * 0.5f;
-            if (s_status.Length > 0) UiParts.Label(new Rect(cx, btnY, statW, btnH), s_status, s_status_style);
+            bool spareRow = end - page.Scroll < visible;
+            Rect statR = spareRow ? new Rect(cx, cy - lineH, cw, lineH) : new Rect(cx, btnY, statW, btnH);
+            if (s_status.Length > 0) UiParts.Label(statR, s_status, spareRow ? StatusStyleNoWrap() : s_status_style);
             if (end < page.RowCount) UiParts.Label(new Rect(cx, cy, statW, lineH), "▼", RightAligned(s_line));
 
             // 一番下: 操作の説明を 1 行で (幅に収まるまで文字を小さくする)
@@ -1377,7 +1399,7 @@ namespace RS2QoL
             if (s_capture >= 0)
             {
                 float statH = lineH * 1.1f;
-                Rect statHole = new Rect(cx - pad * 0.5f, btnY + btnH / 2f + lineH * 0.13f - statH / 2f, statW + pad * 0.5f, statH);
+                Rect statHole = new Rect(statR.x - pad * 0.5f, statR.y + statR.height / 2f + lineH * 0.13f - statH / 2f, statR.width + pad * 0.5f, statH);
                 DrawCaptureDim(statHole, lineH * 0.4f);
             }
         }
@@ -1438,6 +1460,17 @@ namespace RS2QoL
             t.Apply();
             t.hideFlags = HideFlags.HideAndDontSave;
             return t;
+        }
+
+        private static GUIStyle s_statusNoWrap;
+
+        /// <summary>状態メッセージを折り返さず 1 行で出す書式 (色と大きさは s_status_style に毎回合わせる)。</summary>
+        private static GUIStyle StatusStyleNoWrap()
+        {
+            if (s_statusNoWrap == null) { s_statusNoWrap = new GUIStyle(s_status_style); s_statusNoWrap.wordWrap = false; s_statusNoWrap.clipping = TextClipping.Overflow; }
+            s_statusNoWrap.fontSize = s_status_style.fontSize;
+            s_statusNoWrap.normal.textColor = s_status_style.normal.textColor;
+            return s_statusNoWrap;
         }
 
         private static GUIStyle s_footerFit;

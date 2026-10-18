@@ -1,3 +1,4 @@
+using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -9,11 +10,153 @@ namespace RS2QoL.Patches
     ///   [Pad]   Util.GetKeypadState: 4 軸の生値 (0.01 刻み) とボタン/方向ビットが変わった時
     ///   [Key]   Sys.syncKey 通過後にゲームが認識した方向 (Sys.key[0]) が変わった時
     ///   [Field] Core.move_by_key: フィールド移動処理が見ている方向 (human_key) が変わった時 + 阻害フラグ
-    ///   [MARK]  Start+Select を同時に押した時。「今おかしかった」の目印に使う
+    ///   [MARK]  Start+Select を同時に押した時 (キーボードは MarkKey、既定 F7)。「今おかしかった」の目印に使う
+    /// ON/OFF は config のほか MOD 設定画面の「その他」と ToggleKey (既定 F8)。OFF 時と終了時に LogOutput.log を RS2QoL-diag\ に取り分けて
+    /// エクスプローラで開く (次の起動で上書きされないように)。
     /// </summary>
     internal static class InputDiag
     {
         public static bool Enabled { get { return Plugin.DiagEnabled != null && Plugin.DiagEnabled.Value; } }
+
+        private static GUIStyle s_badge;
+        private static float s_markTime = -100f;   // 最後に Start+Select の目印を書いた時刻 (realtimeSinceStartup)。しばらく左下の表示を「目印を記録しました」にする
+        private static int s_badgeSize = -1;
+
+        /// <summary>診断ログを ON/OFF するキー (config [Diagnostics] ToggleKey、既定 F8。None で無し)。</summary>
+        public static ConfigEntry<KeyCode> ToggleKey;
+        /// <summary>目印 ([MARK]) を書くキー (config [Diagnostics] MarkKey、既定 F7。パッドの Start+Select と同じ。キーボードだけで遊ぶ人用)。</summary>
+        public static ConfigEntry<KeyCode> MarkKey;
+        private static bool s_recorded;       // この起動で一度でも ON にした (終了時に複製してフォルダを開く条件)
+        private static bool s_folderOpened;   // ログのフォルダを開いた (1 回の起動で 1 度だけ)
+        private static readonly string s_launch = System.DateTime.Now.ToString("yyyyMMdd-HHmmss");   // 起動日時 (複製のファイル名)
+
+        public static string LogPath { get { return System.IO.Path.Combine(BepInEx.Paths.BepInExRootPath, "LogOutput.log"); } }
+        /// <summary>複製の置き場 (BepInEx\RS2QoL-diag\)。LogOutput.log は次の起動で上書きされるので、ここに起動ごとに 1 ファイルで取り分ける。</summary>
+        public static string CopyDir { get { return System.IO.Path.Combine(BepInEx.Paths.BepInExRootPath, "RS2QoL-diag"); } }
+        public static string CopyPath { get { return System.IO.Path.Combine(CopyDir, "RS2QoL-diag_" + s_launch + ".log"); } }
+
+        /// <summary>
+        /// ON/OFF を切り替える (設定画面の項目と F8 から)。戻り値は設定画面の下に出す案内。
+        /// OFF にした時は LogOutput.log を RS2QoL-diag\ に複製し (次の起動で上書きされないように)、エクスプローラでその複製を選択した
+        /// 状態でフォルダを開く (利用者が保存先を探さなくて済むように。ユーザー要望 2026-10-18)。開くのは 1 回の起動で 1 度だけ、
+        /// 複製は OFF のたびに最新の内容で上書き (同じ起動の中では同じファイル)。ON のまま終了した時は OnQuit が複製して開く。
+        /// </summary>
+        public static string SetEnabled(bool on, string via)
+        {
+            if (Plugin.DiagEnabled == null) return "";
+            Plugin.DiagEnabled.Value = on;
+            Plugin.Log.LogInfo("[Diag] " + (on ? "ON" : "OFF") + " via " + via + " (log = " + LogPath + ")");
+            if (on) { s_recorded = true; return @"BepInEx\LogOutput.log に記録中 (OFF で RS2QoL-diag\ に取り分け)"; }
+            bool copied = CopyLog();
+            bool opened = OpenLogFolderOnce(copied ? CopyPath : LogPath);
+            if (copied) return opened ? @"BepInEx\RS2QoL-diag\ に取り分けて、そのフォルダを開きました" : @"BepInEx\RS2QoL-diag\ に取り分けました";
+            return opened ? "記録を止めました。ログのフォルダを開きました" : "記録を止めました (ログは残っています)";
+        }
+
+        public static string Toggle(string via) { return SetEnabled(!Enabled, via); }
+
+        /// <summary>目印の行 ([MARK]) を書く (パッドの Start+Select、キーボードの MarkKey から)。左下の表示もしばらく変える。</summary>
+        public static void Mark(string via)
+        {
+            Plugin.Log.LogInfo("[MARK] ---------------- " + via + " pressed at " + T());
+            NoteMark();
+            Interp60.RequestDump();
+        }
+
+        /// <summary>
+        /// LogOutput.log を CopyPath に複製する (書き切ってから。BepInEx は FileShare.Read で開いているので読める)。成功したら true。
+        /// </summary>
+        public static bool CopyLog()
+        {
+            try
+            {
+                Plugin.FlushLog();
+                if (!System.IO.Directory.Exists(CopyDir)) System.IO.Directory.CreateDirectory(CopyDir);
+                using (System.IO.FileStream src = new System.IO.FileStream(LogPath, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite))
+                using (System.IO.FileStream dst = new System.IO.FileStream(CopyPath, System.IO.FileMode.Create, System.IO.FileAccess.Write, System.IO.FileShare.Read))
+                {
+                    // BepInEx は BOM 無しの UTF-8 で書く。メモ帳は BOM 無しの日本語を Shift_JIS と誤判定して化けるので (実機 2026-10-18)、
+                    // 複製の先頭には UTF-8 の BOM を付ける
+                    dst.Write(new byte[] { 0xEF, 0xBB, 0xBF }, 0, 3);
+                    byte[] buf = new byte[65536];
+                    int n;
+                    while ((n = src.Read(buf, 0, buf.Length)) > 0) dst.Write(buf, 0, n);
+                }
+                Plugin.Log.LogInfo("[Diag] copied log to " + CopyPath);
+                return true;
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogWarning("[Diag] copy log failed: " + e.Message);
+                return false;
+            }
+        }
+
+        /// <summary>エクスプローラで file を選択してフォルダを開く。1 回の起動で 1 度だけ (開けたら true)。</summary>
+        public static bool OpenLogFolderOnce(string file)
+        {
+            if (s_folderOpened) return false;
+            s_folderOpened = true;
+            try
+            {
+                System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + file + "\"");
+                Plugin.Log.LogInfo("[Diag] opened folder of " + file);
+                return true;
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogWarning("[Diag] open log folder failed: " + e.Message);
+                return false;
+            }
+        }
+
+        /// <summary>Plugin.Update (Unity フレームごと) から: ToggleKey の押下で ON/OFF (設定画面が開いていれば案内も出す)、ON 中の MarkKey で目印。</summary>
+        public static void UpdateHotkey()
+        {
+            if (ToggleKey != null && ToggleKey.Value != KeyCode.None && Input.GetKeyDown(ToggleKey.Value))
+                ConfigMenu.SetStatus(Toggle("key " + ToggleKey.Value));
+            if (Enabled && MarkKey != null && MarkKey.Value != KeyCode.None && Input.GetKeyDown(MarkKey.Value))
+                Mark(MarkKey.Value.ToString());
+        }
+
+        /// <summary>終了時 (Plugin.OnApplicationQuit): この起動で記録したなら複製し、フォルダをまだ開いていなければ開く。</summary>
+        public static void OnQuit()
+        {
+            if (!s_recorded) return;
+            bool copied = CopyLog();
+            OpenLogFolderOnce(copied ? CopyPath : LogPath);
+        }
+
+        /// <summary>Start+Select の目印を書いた (左下の表示をしばらく「目印を記録しました」にする)。</summary>
+        public static void NoteMark() { s_markTime = Time.realtimeSinceStartup; }
+
+        /// <summary>
+        /// 診断ログが ON の間、画面の左下に小さく「診断ログ 記録中」と出す (Plugin.OnGUI から、Unity フレームごと)。
+        /// 設定画面から ON にした利用者に「今は記録している」と分かるようにするため (ユーザー要望 2026-10-18。コンソール窓は
+        /// フルスクリーンで見えず、× で閉じるとゲームごと落ちるので使わない)。タイトルでも出す。設定画面が開いている間はその下になる。
+        /// Start+Select の目印の直後 2.5 秒は「目印を記録しました」。
+        /// </summary>
+        public static void DrawBadge()
+        {
+            if (!Enabled) return;
+            int size = Mathf.Max(11, Screen.height / 45);
+            if (s_badge == null || s_badgeSize != size)
+            {
+                s_badgeSize = size;
+                s_badge = new GUIStyle(GUI.skin.label);
+                s_badge.fontSize = size;
+                s_badge.fontStyle = FontStyle.Bold;
+                s_badge.alignment = TextAnchor.LowerLeft;
+                s_badge.normal.textColor = new Color(0.55f, 0.9f, 1f);
+            }
+            string text = Time.realtimeSinceStartup - s_markTime <= 2.5f ? "診断ログ 目印を記録しました" : "診断ログ 記録中";
+            Rect r = new Rect(size / 2, Screen.height - size * 2, size * 20, size * 1.5f);
+            Color c = GUI.color;
+            GUI.color = new Color(0f, 0f, 0f, 0.8f);
+            GUI.Label(new Rect(r.x + 1, r.y + 1, r.width, r.height), text, s_badge);
+            GUI.color = c;
+            GUI.Label(r, text, s_badge);
+        }
 
         public static string T()
         {
@@ -120,11 +263,7 @@ namespace RS2QoL.Patches
             // Select は ButtonRemapPatch で MOD 設定画面に割り当てられ 0x200 では来なくなったので、
             // 目印は Start+Select の同時押しにする (物理ボタンを直接見るので割り当てに依らない)
             bool mark = PadMap.IsPhysicalDown(6) && PadMap.IsPhysicalDown(7);
-            if (mark && !s_prevMark)
-            {
-                Plugin.Log.LogInfo("[MARK] ---------------- Start+Select pressed at " + InputDiag.T());
-                Interp60.RequestDump();
-            }
+            if (mark && !s_prevMark) InputDiag.Mark("Start+Select");
             s_prevMark = mark;
             // xb (XInput のボタン) も変化条件に入れる: MOD 側 (確認ダイアログや閉じた直後のガード) が飲み込んで key に出ない押下も、
             // パッドが押されたこと自体は残すため
