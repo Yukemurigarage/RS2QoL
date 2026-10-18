@@ -79,6 +79,8 @@ namespace RS2QoL
             Patches.PlayerScale.Bind(Config);
             // 技・攻撃アニメの速さ ([Battle] AttackAnimSpeed、既定 0 = 倍速に従う。% 指定で倍速に関係なく固定)
             Patches.AttackAnim.Bind(Config);
+            // 戦闘でアニメーションするモンスターの動きを倍速中も等倍にする ([Battle] MonsterAnimRealtime)
+            Patches.MonsterAnim.Bind(Config);
             // メニューで選んでいる文字の点滅を倍速中も等倍の速さに ([Menu] CursorBlinkRealTime、既定 true。戦闘のコマンド窓・会話の選択肢も含む)
             Patches.CursorBlink.Bind(Config);
             // 店の買う / 売るの確認画面で、すでに装備している仲間の絵の横に E を出す ([Menu] ShopEquipMark、既定 true)
@@ -97,6 +99,8 @@ namespace RS2QoL
             Patches.MessageSpeed.Bind(Config);
             // NPC に十字キーを押し当て続けると決定なしで話しかける ([Field] TalkOnBump / TalkOnBumpFrames / TalkOnBumpCooldownFrames)
             Patches.TalkOnBump.Bind(Config);
+            // ダッシュの基準をマップのモンスターの有無で自動的に切り替える ([Field] AutoDash)
+            Patches.AutoDash.Bind(Config);
             Patches.PauseHint.Bind(Config);
             // ワールドマップのカーソルを十字キーで自由に動かす ([WorldMap] FreeCursor / CursorSpeed)
             Patches.WorldMapCursor.Bind(Config);
@@ -146,6 +150,8 @@ namespace RS2QoL
             harmony.PatchAll();
             Logger.LogInfo("Harmony patches applied");
             Logger.LogInfo("[MessageSpeed] patched: Core.message_lop (MessageSpeed=" + Patches.MessageSpeed.Mode.Value + ")");
+            Logger.LogInfo("[AutoDash] patched: Core.move_human_sub_r (AutoDash=" + Patches.AutoDash.Enabled.Value + ")");
+            Logger.LogInfo("[MonsterAnim] patched: Effect.draw / SSObject.Update (MonsterAnimRealtime=" + Patches.MonsterAnim.Enabled.Value + ")");
             Logger.LogInfo("[DialogueAdvance] patched: Core.pause_sa / message_lop2 / put_select / search_ivent / its_enter_sa / its_ivent_move / its_touch_sa (WaitForPress=" + Patches.DialogueAdvance.WaitEnabled + " ByDpad=" + Patches.DialogueAdvance.DpadEnabled + ")");
             Logger.LogInfo("[Growth] patched: Core.btl_counter_add / Work.getBattleCount / Battle.init / Battle.dest (Percent=" + Patches.EnemyGrowth.Percent.Value + " Paused=" + Patches.EnemyGrowth.Paused.Value + " SkipEscape=" + Patches.EnemyGrowth.SkipEscape.Value + ")");
             Logger.LogInfo("[Economy] patched: Core.add_budget (TaxPercent=" + Patches.TaxIncome.Percent.Value + " TaxOnEscape=" + Patches.TaxIncome.OnEscape.Value + ")");

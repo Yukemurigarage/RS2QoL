@@ -36,6 +36,8 @@ namespace RS2QoL.Patches
         public static ConfigEntry<int> HoldX2Percent, HoldX3Percent, HoldX4Percent, HoldReleasePercent;
         /// <summary>押している間だけモードの今の段 (0 = 離している / 2〜4 = その倍率)。</summary>
         private static int s_holdLevel;
+        /// <summary>押している間だけモードの今の段 (0 = 離している / 2〜4 = その倍率)。AttackAnim がトリガー中の固定解除に使う。</summary>
+        public static int HoldLevel { get { return s_holdLevel; } }
         /// <summary>押し始める前に倍速が ON だったか (離した時に戻すため)。</summary>
         private static bool s_activeBeforeHold;
         private static bool s_holdLogged;

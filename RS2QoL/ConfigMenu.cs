@@ -394,6 +394,8 @@ namespace RS2QoL
                 Right = () => AttackAnim.Cycle(+1),
                 Activate = () => AttackAnim.Cycle(+1),
             });
+            AddToggle(p, "トリガーで倍速中は技アニメも倍速に従う", AttackAnim.FollowHold);
+            AddToggle(p, "アニメするモンスター (ボス級) の動きは倍速中も等倍", MonsterAnim.Enabled);
             p.Items.Add(new Item
             {
                 Label = "ダメージ数字の跳ねの速さ",

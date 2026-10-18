@@ -15,10 +15,15 @@ namespace RS2QoL.Patches
     /// % 指定の時は「1 論理フレームあたり 2 × (設定 / 100) / 倍率 コマ」を累積で進める (150% の x4 なら 0.75 コマ)。
     /// 整数にならないぶんは余りとして持ち越し、余りが足りないフレームは 0 コマ (スクリプトを進めずに同じ絵を描く)。
     /// これで「コマンド入力や行動の間は倍速で短く、技アニメだけは好みの速さ」にできる。
+    ///
+    /// AttackAnimFollowHold (既定 OFF): 倍速ボタンを「押している間だけ」モード ([Speed] TriggerHold) でトリガーを引いている間は、
+    /// 固定をやめて本体どおり倍速 (引いた深さの x2 / x4 等) に従う。自分でトリガーを引いた時は技アニメも速くしたい人向け。
+    /// 本体は pro_com_loop の後に毎フレーム animspeed を 2 に戻すので、途中で離しても固定に戻るだけで何も残らない。
     /// </summary>
     internal static class AttackAnim
     {
         public static ConfigEntry<int> Speed;
+        public static ConfigEntry<bool> FollowHold;
         public const int MIN = 25, MAX = 400, STEP = 25;
         private static int s_acc;
 
@@ -26,9 +31,20 @@ namespace RS2QoL.Patches
         {
             Speed = config.Bind("Battle", "AttackAnimSpeed", 0,
                 new ConfigDescription("技・攻撃アニメの速さ。0=倍速に従う (本体どおり。倍速なら倍率分速くなる) / 25〜400=倍速に関係なく、等倍の本体を 100 とした % の実時間の速さに固定 (25 刻み。150 なら x2 でも x4 でも等倍の 1.5 倍)。コマンド入力や行動の間は倍速のまま", new AcceptableValueRange<int>(0, MAX)));
+            FollowHold = config.Bind("Battle", "AttackAnimFollowHold", false,
+                "倍速ボタンを押している間だけモード ([Speed] TriggerHold) でトリガーを引いている間は、AttackAnimSpeed の固定をやめて技・攻撃アニメも倍速 (引いた深さの x2 / x4 等) に従う。離すと固定に戻る");
         }
 
-        public static bool Active { get { return Speed != null && Speed.Value > 0; } }
+        /// <summary>固定が効いているか (設定が 0 より大きく、FollowHold でトリガーを引いている間でない)。</summary>
+        public static bool Active
+        {
+            get
+            {
+                if (Speed == null || Speed.Value <= 0) return false;
+                if (FollowHold != null && FollowHold.Value && GameSpeed.HoldLevel > 0) return false;
+                return true;
+            }
+        }
 
         public static string Label(int pct)
         {
@@ -63,9 +79,20 @@ namespace RS2QoL.Patches
     [HarmonyPatch(typeof(Effect), "pro_com_loop")]
     internal static class AttackAnimSpeedPatch
     {
+        private static bool s_prevActive = true;
+
         private static void Prefix(Effect __instance)
         {
-            if (!AttackAnim.Active || __instance.lastdemo != 0) return;
+            if (__instance.lastdemo != 0) return;
+            bool active = AttackAnim.Active;
+            if (active != s_prevActive)
+            {
+                // 固定 ↔ 倍速追従の切り替わり (トリガーを引いた / 離した時) を 1 行。実機で「離したら元の % に戻ったか」を見るため
+                s_prevActive = active;
+                Plugin.Log.LogInfo("[Anim] " + (active ? "fixed " + AttackAnim.Speed.Value + "%" : "follow speed x" + GameSpeed.MulText(GameSpeed.EffectivePercent()))
+                    + " (hold=x" + (GameSpeed.HoldLevel == 0 ? 1 : GameSpeed.HoldLevel) + " speed=" + GameSpeed.EffectivePercent() + "%)");
+            }
+            if (!active) return;
             __instance.animspeed = AttackAnim.StepsThisFrame();
         }
     }
