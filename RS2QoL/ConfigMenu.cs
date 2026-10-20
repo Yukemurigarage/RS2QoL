@@ -539,6 +539,72 @@ namespace RS2QoL
             p.Items.Add(new Item { Label = "1 回に上がる量と、敵の強さ・税収も変わらない", Selectable = false });
             p.Items.Add(new Item { Label = "技術点は敵の強さで決まるので、敵を遅くすると成長も遅くなる", Selectable = false });
 
+            // ひらめき: 瀕死 (膝をつく HP) の味方が攻撃した時だけ、技をひらめく確率を倍にする (漫画の主人公モード、既定 Off)
+            p = AddPage("ひらめき");
+            p.Items.Add(new Item
+            {
+                Label = "直前のひらめき判定",
+                Value = () => SparkBoost.LastLabel(),
+                Selectable = false,
+            });
+            AddToggle(p, "瀕死の味方はひらめきやすい (漫画の主人公モード)", SparkBoost.Enabled);
+            p.Items.Add(new Item
+            {
+                Label = "ひらめく確率の倍率",
+                Value = () => SparkBoost.MultLabel(),
+                Left = () => SparkBoost.CycleMult(-1),
+                Entry = SparkBoost.Multiplier,
+                Right = () => SparkBoost.CycleMult(+1),
+                Activate = () => SparkBoost.CycleMult(+1),
+                Changed = () => SparkBoost.MultChanged(),
+            });
+            p.Items.Add(new Item
+            {
+                Label = "瀕死とみなす HP (最大 HP に対する割合)",
+                Value = () => SparkBoost.HpLabel(),
+                Left = () => SparkBoost.CycleHp(-SparkBoost.STEP_HP),
+                Entry = SparkBoost.HpPercent,
+                Right = () => SparkBoost.CycleHp(+SparkBoost.STEP_HP),
+                Activate = () => SparkBoost.CycleHp(+SparkBoost.STEP_HP),
+                Changed = () => SparkBoost.HpChanged(),
+            });
+            p.Items.Add(new Item
+            {
+                Label = "瀕死の時に敵の閃きレベルに足す値",
+                Value = () => SparkBoost.BonusLabel(),
+                Left = () => SparkBoost.CycleBonus(-1),
+                Entry = SparkBoost.LevelBonus,
+                Right = () => SparkBoost.CycleBonus(+1),
+                Activate = () => SparkBoost.CycleBonus(+1),
+                Changed = () => SparkBoost.BonusChanged(),
+            });
+            p.Items.Add(new Item
+            {
+                Label = "覚醒判定: 0 % の技に 1 攻撃 1 回だけ行う確率",
+                Value = () => SparkBoost.FloorLabel(),
+                Left = () => SparkBoost.CycleFloor(-1),
+                Entry = SparkBoost.FloorPercent,
+                Right = () => SparkBoost.CycleFloor(+1),
+                Activate = () => SparkBoost.CycleFloor(+1),
+                Changed = () => SparkBoost.FloorChanged(),
+            });
+            p.Items.Add(new Item
+            {
+                Label = "覚醒判定の届く幅",
+                Value = () => SparkBoost.GapLabel(),
+                Left = () => SparkBoost.CycleGap(-SparkBoost.STEP_GAP),
+                Entry = SparkBoost.FloorMaxGap,
+                Right = () => SparkBoost.CycleGap(+SparkBoost.STEP_GAP),
+                Activate = () => SparkBoost.CycleGap(+SparkBoost.STEP_GAP),
+                Changed = () => SparkBoost.GapChanged(),
+            });
+            // 説明行は枠の幅 (全角 30 字ほど) に収まる長さにする
+            p.Items.Add(new Item { Label = "ひらめく確率は「敵の閃きレベル − 技の難度」の差で決まる", Selectable = false });
+            p.Items.Add(new Item { Label = "差 0 で 19.6 %、差 7 以上は 11.8 %、差 −6 以下は 0 %", Selectable = false });
+            p.Items.Add(new Item { Label = "瀕死で攻撃した時だけ、敵のレベルを足して引き直し、倍にする", Selectable = false });
+            p.Items.Add(new Item { Label = "それでも 0 % の技は、覚醒判定で表の最初の 1 つだけ抽選する", Selectable = false });
+            p.Items.Add(new Item { Label = "見切り (敵の技を受けて覚える) も同じ式なので、瀕死で受けた時も同じ", Selectable = false });
+
             // 国庫: 税収は戦闘のたびに自動で国庫に入る (玉座に戻る必要はない)。その倍率と、今の国庫・1 戦あたりの額の表示
             p = AddPage("国庫");
             p.Items.Add(new Item
