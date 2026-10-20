@@ -126,7 +126,9 @@ namespace RS2QoL.Patches
         private const int DIR_BITS = 0xF0000;
         public static bool HeldSinceBusy;   // 会話・イベントの後、十字キーを離していない
         public static int Frame;            // search_ivent の通し番号 (ログの突き合わせ用)
+        public static int BusyPerson = 255; // 直前の会話・イベントの相手 (Core.ivent_people)。本体はイベントの終わりに 255 へ戻すので、取り込み中に最後に見た 255 以外の値を持つ。人が関わらないイベントなら 255 のまま
         private static int s_prevIvent;
+        private static bool s_prevBusy;
         private static int s_busyEndFrame;
         private static int s_stepAtBusy;    // busy の最後に見た StepSerial (これが進んだら会話の後に 1 マス歩いた)
 
@@ -135,6 +137,9 @@ namespace RS2QoL.Patches
             Core c = __instance;
             Frame++;
             bool busy = (c.ivent_sw | c.mess_flag | c.ivent_stop_flag | c.exevt_flg | c.battle_flg | c.tono_flg | c.exdemo_flg) != 0;
+            if (busy && !s_prevBusy) BusyPerson = 255;          // 新しいイベントの始まりで相手を忘れる (前のイベントの相手を引きずらない)
+            if (busy && c.ivent_people != 255) BusyPerson = c.ivent_people;
+            s_prevBusy = busy;
             // 離したかは joy_data[0] ではなく Sys.key[0] (今のパッドの状態) で見る。会話の終わり (ok_mes_finish2) が joy_data を 0 にするので、
             // 次のフレームの search_ivent は joy_data[0] == 0 を見て「離した」と誤判定していた (その次のフレームで歩き込んで本体が再開する)
             bool prevHeld = HeldSinceBusy;
@@ -148,6 +153,28 @@ namespace RS2QoL.Patches
                 Plugin.Log.LogInfo(string.Format("[DialogueAdvance] held {0}→{1} ({12}) frame={2} ivent_sw={3} mess={4} stop={5} exevt={6} battle={7} tono={8} exdemo={9} joy0=0x{10:X} Sys.key0=0x{11:X}",
                     prevHeld, HeldSinceBusy, Frame, c.ivent_sw, c.mess_flag, c.ivent_stop_flag, c.exevt_flg, c.battle_flg, c.tono_flg, c.exdemo_flg, c.joy_data[0], Sys.key[0], why ?? "busy"));
             s_prevIvent = c.ivent_sw;
+        }
+
+        /// <summary>
+        /// 会話直後の再開の抑止を掛けるべきか (its_enter_sa / its_touch_sa / its_ivent_move の Prefix から呼ぶ)。
+        /// 掛けるのは「十字キーを離していない」「今は取り込み中でない」「相手が直前の会話と同じ人」が全部そろった時だけ。
+        /// - 取り込み中 (ivent_sw / mess_flag) は台本が自分を歩かせている最中で、その先の人や乗り物に触れるのは台本の筋。
+        ///   実機 (2026-10-20 のログ): ソーモンの船頭に金を払った後、台本が自分を船 (people_ivent_type 2、ev31/3) に歩かせる。台詞を十字キーで閉じて
+        ///   押し続けていると its_enter_sa が抑止され、船に乗らないまま次の場面へ飛ばされて一歩も動けなくなった。A で閉じていれば起きない。
+        /// - 相手が違う人なら本体どおり始める。抑止したい誤爆は「閉じた押しのまま歩き込んで同じ会話がもう一度始まる」だけなので、同じ人に限る。
+        /// </summary>
+        public static bool ShouldBlock(Core c, int person, string path)
+        {
+            if (!HeldSinceBusy) return false;
+            if (((Sys.key[0] | c.joy_data[0]) & DIR_BITS) == 0) return false;   // 離した直後の 1 フレームは joy_data がまだ押している (本体の移動はそれを使う)
+            string pass = null;
+            if ((c.ivent_sw | c.mess_flag) != 0) pass = "scripted";
+            else if (person != BusyPerson) pass = "other person";
+            if (pass == null) return true;
+            if (Plugin.DiagOn)
+                Plugin.Log.LogInfo(string.Format("[DialogueAdvance] {0} を通す ({1}) frame={2} person={3} last={4} ivent_sw={5} mess={6}",
+                    path, pass, Frame, person, BusyPerson, c.ivent_sw, c.mess_flag));
+            return false;
         }
 
         // Diagnostics: search_ivent でイベントが始まった (ivent_sw 0 → 非 0) 時の入力の状態を出す (会話のたびに 1 行)
@@ -181,7 +208,8 @@ namespace RS2QoL.Patches
         }
     }
 
-    // 会話・イベントの後、十字キーを離す (か 1 マス歩き出す) までは「触れると始まるイベント」を起こさず、普通の人と同じく進めない扱い (work_p[0] = 1) にする。
+    // 会話・イベントの後、十字キーを離す (か 1 マス歩き出す) までは、同じ人の「触れると始まるイベント」を起こさず、普通の人と同じく進めない扱い (work_p[0] = 1) にする。
+    // 台本が自分を歩かせている最中 (取り込み中) と、相手が別の人・乗り物の時は本体のまま通す (DialogueAdvanceHoldPatch.ShouldBlock)。
     // 元処理 (ivent_sw = 2 + そのマスへ進む) を止める必要があるので Prefix
     [HarmonyPatch(typeof(Core), "its_enter_sa")]
     internal static class DialogueAdvanceEnterPatch
@@ -193,8 +221,7 @@ namespace RS2QoL.Patches
             if (Plugin.DiagOn)
                 Plugin.Log.LogInfo(string.Format("[DialogueAdvance] its_enter_sa frame={0} held={1} Sys.key0=0x{2:X} joy0=0x{3:X} person={4}",
                     DialogueAdvanceHoldPatch.Frame, DialogueAdvanceHoldPatch.HeldSinceBusy, Sys.key[0], __instance.joy_data[0], __instance.ivent_people_stok));
-            if (!DialogueAdvanceHoldPatch.HeldSinceBusy) return true;
-            if (((Sys.key[0] | __instance.joy_data[0]) & 0xF0000) == 0) return true;   // 離した直後の 1 フレームは joy_data がまだ押している (本体の移動はそれを使う)
+            if (!DialogueAdvanceHoldPatch.ShouldBlock(__instance, __instance.ivent_people_stok, "its_enter_sa")) return true;
             __instance.work_p[0] = 1;
             if (!s_logged)
             {
@@ -222,9 +249,9 @@ namespace RS2QoL.Patches
         private static bool Prefix(Core __instance)
         {
             if (!DialogueAdvanceHoldPatch.HeldSinceBusy) return true;
-            if (((Sys.key[0] | __instance.joy_data[0]) & 0xF0000) == 0) return true;   // 離した直後の 1 フレームは joy_data がまだ押している (本体の移動はそれを使う)
             int no = (int)s_moveNo.GetValue(__instance);
             if (no < 0 || no >= __instance.people.Length) return true;
+            if (!DialogueAdvanceHoldPatch.ShouldBlock(__instance, no, "its_ivent_move")) return true;
             __instance.people[no].people_move_count = 32;
             __instance.move_not_mode();
             if (Plugin.DiagOn)
@@ -255,8 +282,7 @@ namespace RS2QoL.Patches
             if (Plugin.DiagOn)
                 Plugin.Log.LogInfo(string.Format("[DialogueAdvance] its_touch_sa frame={0} held={1} Sys.key0=0x{2:X} joy0=0x{3:X} person={4}",
                     DialogueAdvanceHoldPatch.Frame, DialogueAdvanceHoldPatch.HeldSinceBusy, Sys.key[0], __instance.joy_data[0], __instance.ivent_people_stok));
-            if (!DialogueAdvanceHoldPatch.HeldSinceBusy) return true;
-            if (((Sys.key[0] | __instance.joy_data[0]) & 0xF0000) == 0) return true;   // 離した直後の 1 フレームは joy_data がまだ押している (本体の移動はそれを使う)
+            if (!DialogueAdvanceHoldPatch.ShouldBlock(__instance, __instance.ivent_people_stok, "its_touch_sa")) return true;
             __instance.work_p[0] = 1;
             if (!s_logged)
             {

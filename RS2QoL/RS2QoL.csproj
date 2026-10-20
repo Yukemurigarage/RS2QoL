@@ -8,7 +8,7 @@
     <Product>RS2QoL</Product>
     <BepInExPluginGuid>net.my-p.rs2qol</BepInExPluginGuid>
     <BepInExPluginName>RS2QoL</BepInExPluginName>
-    <Version>0.46.0</Version>
+    <Version>0.47.0</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>latest</LangVersion>
     <RootNamespace>RS2QoL</RootNamespace>
