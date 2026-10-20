@@ -539,7 +539,7 @@ namespace RS2QoL
             p.Items.Add(new Item { Label = "1 回に上がる量と、敵の強さ・税収も変わらない", Selectable = false });
             p.Items.Add(new Item { Label = "技術点は敵の強さで決まるので、敵を遅くすると成長も遅くなる", Selectable = false });
 
-            // ひらめき: 瀕死 (膝をつく HP) の味方が攻撃した時だけ、技をひらめく確率を倍にする (漫画の主人公モード、既定 Off)
+            // ひらめき: 瀕死 (膝をつく HP) か最後の 1 人の味方が攻撃した時だけ、技をひらめく確率を倍にする (ヒーローモード、既定 Off)
             p = AddPage("ひらめき");
             p.Items.Add(new Item
             {
@@ -547,7 +547,8 @@ namespace RS2QoL
                 Value = () => SparkBoost.LastLabel(),
                 Selectable = false,
             });
-            AddToggle(p, "瀕死の味方はひらめきやすい (漫画の主人公モード)", SparkBoost.Enabled);
+            AddToggle(p, "瀕死の味方はひらめきやすい (ヒーローモード)", SparkBoost.Enabled);
+            AddToggle(p, "戦える仲間が 1 人だけなら HP に関係なく発動", SparkBoost.LastOneStanding);
             p.Items.Add(new Item
             {
                 Label = "ひらめく確率の倍率",
@@ -601,7 +602,7 @@ namespace RS2QoL
             // 説明行は枠の幅 (全角 30 字ほど) に収まる長さにする
             p.Items.Add(new Item { Label = "ひらめく確率は「敵の閃きレベル − 技の難度」の差で決まる", Selectable = false });
             p.Items.Add(new Item { Label = "差 0 で 19.6 %、差 7 以上は 11.8 %、差 −6 以下は 0 %", Selectable = false });
-            p.Items.Add(new Item { Label = "瀕死で攻撃した時だけ、敵のレベルを足して引き直し、倍にする", Selectable = false });
+            p.Items.Add(new Item { Label = "瀕死か最後の 1 人で攻撃した時だけ、敵のレベルを足して引き直し、倍にする", Selectable = false });
             p.Items.Add(new Item { Label = "それでも 0 % の技は、覚醒判定で表の最初の 1 つだけ抽選する", Selectable = false });
             p.Items.Add(new Item { Label = "見切り (敵の技を受けて覚える) も同じ式なので、瀕死で受けた時も同じ", Selectable = false });
 

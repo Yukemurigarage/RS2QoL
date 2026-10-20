@@ -4,7 +4,9 @@ using HarmonyLib;
 namespace RS2QoL.Patches
 {
     /// <summary>
-    /// 漫画の主人公モード: 瀕死 (膝をつく HP) の味方が攻撃した時だけ、技をひらめく確率を倍にする。既定 OFF。
+    /// ヒーローモード (v0.48.0 までの表示名は「漫画の主人公モード」、cfg のキーは HeroMode のまま): 瀕死 (膝をつく HP) の味方、
+    /// または戦える仲間が自分 1 人だけになった味方が攻撃した時 (敵の技を受けた時の見切りも) だけ、技をひらめく確率を倍にする。既定 OFF。
+    /// 「最後の 1 人」は Work.memberdata_b[0..member-1] のうち 戦える人 (CanFight: HP > 0、戦闘不能・石化・気絶・麻痺・眠り・スタン・魅了でない) が 1 人。
     ///
     /// 本体の仕組み (decompiled/Battle.cs):
     /// - ひらめきの抽選は攻撃のダメージ計算 Calc → check_change → (派生表 Data.waza_level の候補ごとに) test_change → check_get。
@@ -34,6 +36,7 @@ namespace RS2QoL.Patches
     internal static class SparkBoost
     {
         public static ConfigEntry<bool> Enabled;
+        public static ConfigEntry<bool> LastOneStanding;
         public static ConfigEntry<int> Multiplier;
         public static ConfigEntry<int> HpPercent;
         public static ConfigEntry<int> LevelBonus;
@@ -66,9 +69,12 @@ namespace RS2QoL.Patches
         public static void Bind(ConfigFile config)
         {
             Enabled = config.Bind("Spark", "HeroMode", false,
-                "漫画の主人公モード。瀕死 (膝をつく HP) の味方が攻撃した時だけ、技をひらめく確率を Multiplier 倍にする。false なら本体そのまま。"
+                "ヒーローモード。瀕死 (膝をつく HP) の味方が攻撃した時だけ、技をひらめく確率を Multiplier 倍にする。false なら本体そのまま。"
                 + "本体で 0 % の組み合わせ (敵の閃きレベルが技の難度より 6 以上低い) は倍にしても 0 % のまま。"
                 + "見切り (敵の技を受けた時に覚える) も同じ式なので、瀕死の味方が受けた時は同じ倍率・足す値・覚醒判定で判定する");
+            LastOneStanding = config.Bind("Spark", "LastOneStanding", true,
+                "ヒーローモードの時、戦える仲間が自分 1 人だけになったら HP に関係なく発動する (瀕死と同じ扱い)。"
+                + "戦えない = HP 0、戦闘不能、石化、気絶、麻痺、眠り、スタン、魅了。false なら HP だけで見る");
             Multiplier = config.Bind("Spark", "Multiplier", DEFAULT_MULT,
                 new ConfigDescription("瀕死の時にひらめく確率を何倍にするか (1〜8)。本体の確率は差 (敵の閃きレベル − 技の難度) で 0〜19.6 %、"
                     + "7 以上は 11.8 % で頭打ち。3 なら 11.8 % → 35 %、差 0 の 19.6 % → 59 %",
@@ -96,6 +102,51 @@ namespace RS2QoL.Patches
         public static bool FloorUsed { get { return s_floorUsed; } set { s_floorUsed = value; } }
 
         public static bool IsEnabled { get { return Enabled != null && Enabled.Value; } }
+
+        public static bool LastOne { get { return LastOneStanding == null || LastOneStanding.Value; } }
+
+        /// <summary>直前の判定で発動した理由 (設定画面・ログ用): "瀕死" / "最後の 1 人" / "瀕死・最後の 1 人"。</summary>
+        public static string LastReason = "";
+
+        /// <summary>
+        /// 戦える仲間が 1 人だけか。「戦えない」= HP 0、戦闘不能 (LP 0) か石化 (XA[7] & 0xC0、本体 check_die_mem と同じ)、
+        /// 気絶・麻痺・眠り・スタン (XA[4] & 0xF0、本体 check_status_mem = コマンドを入力できない状態)、魅了 (XA[4] & 4、敵側で動く)。
+        /// 暴走・混乱・パニックは (敵を殴ることもあるので) 戦える側に数える。
+        /// </summary>
+        public static bool IsLastStanding(Battle b)
+        {
+            int[][] m = Work.memberdata_b;
+            if (m == null) return false;
+            int n = b.member;
+            if (n > m.Length) n = m.Length;
+            int alive = 0;
+            for (int i = 0; i < n; i++)
+            {
+                int[] x = m[i];
+                if (x == null) continue;
+                if (!CanFight(x)) continue;
+                alive++;
+            }
+            return alive == 1;
+        }
+
+        public static bool CanFight(int[] x)
+        {
+            if (x[14] <= 0) return false;
+            if ((x[7] & (Battle.DEAD | Battle.STONED)) != 0) return false;
+            if ((x[4] & Battle.STATUS_A) != 0) return false;      // FAINT | PARALYZE | SLEEP | STAN
+            if ((x[4] & Battle.CHARM) != 0) return false;
+            return true;
+        }
+
+        /// <summary>ヒーローモードが発動する状態か (瀕死、または LastOneStanding で最後の 1 人)。理由を LastReason に入れる。</summary>
+        public static bool IsAwake(Battle b, int[] actor)
+        {
+            bool near = IsNearDeath(actor);
+            bool last = LastOne && IsLastStanding(b);
+            LastReason = near && last ? "瀕死・最後の 1 人" : near ? "瀕死" : last ? "最後の 1 人" : "";
+            return near || last;
+        }
 
         public static int Mult { get { return Multiplier != null ? Multiplier.Value : DEFAULT_MULT; } }
 
@@ -254,12 +305,12 @@ namespace RS2QoL.Patches
         {
             if (!HasLast) return "(まだ判定していない)";
             string s = (LastMikiriFlag ? "見切り 差 " : "差 ") + Signed(LastDiff) + ": " + Percent(LastBase);
-            if (LastFloorFlag) s += " → 覚醒 " + Percent(LastBoosted) + " (瀕死)";
+            if (LastFloorFlag) s += " → 覚醒 " + Percent(LastBoosted) + " (" + LastReason + ")";
             else if (LastBoostedFlag)
             {
                 s += " → ";
                 if (LastBoostDiff != LastDiff) s += "差 " + Signed(LastBoostDiff) + ": ";
-                s += Percent(LastBoosted) + " (瀕死)";
+                s += Percent(LastBoosted) + " (" + LastReason + ")";
             }
             return s;
         }
@@ -280,7 +331,7 @@ namespace RS2QoL.Patches
             string how = LastFloorFlag ? " floor " + Floor + "% = " : " -> diff=" + boostDiff + " x" + Mult + " = ";
             Plugin.Log.LogInfo("[Spark] applied" + (LastMikiriFlag ? " (mikiri)" : "") + ": lv=" + (diff + b.d1) + " waza=" + b.d0 + " need=" + b.d1
                 + " diff=" + diff + " base=" + baseValue + how + boosted + " /255"
-                + " hp=" + actor[14] + "/" + actor[16] + " roll=" + roll + " hit=" + hit);
+                + " hp=" + actor[14] + "/" + actor[16] + " why=" + LastReason + " roll=" + roll + " hit=" + hit);
             return hit;
         }
     }
@@ -320,7 +371,7 @@ namespace RS2QoL.Patches
             int baseValue = SparkBoost.TableValue(diff);
             // 瀕死なら「敵の閃きレベル + LevelBonus」の差で表を引き直し、本体の値と引き直した値の大きい方を倍にする
             // (差 0 の山 (50) が +5 で 28 に下がって「瀕死なのに下がる」逆転が起きないように)。倍率 1 かつ足す値 0 なら本体と同じなので止めない
-            bool boost = SparkBoost.IsEnabled && (SparkBoost.Mult > 1 || SparkBoost.Bonus > 0 || SparkBoost.Floor > 0) && SparkBoost.IsNearDeath(actor);
+            bool boost = SparkBoost.IsEnabled && (SparkBoost.Mult > 1 || SparkBoost.Bonus > 0 || SparkBoost.Floor > 0) && SparkBoost.IsAwake(b, actor);
             int boostDiff = diff;
             int boosted = baseValue;
             bool floor = false;

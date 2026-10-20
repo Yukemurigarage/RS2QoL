@@ -142,7 +142,7 @@ namespace RS2QoL
             Patches.EnemyGrowth.Bind(Config);
             // 味方の成長 (HP / 技レベル / 術レベル / 全体レベル) の速さを % で調整 ([PlayerGrowth]、既定 100% = 本体どおり)
             Patches.PlayerGrowth.Bind(Config);
-            // 漫画の主人公モード: 瀕死 (膝をつく HP) の味方が攻撃した時だけ技をひらめく確率を倍にする ([Spark] HeroMode、既定 Off = 本体どおり)
+            // ヒーローモード: 瀕死 (膝をつく HP) か最後の 1 人の味方が攻撃した時だけ技をひらめく確率を倍にする ([Spark] HeroMode、既定 Off = 本体どおり)
             Patches.SparkBoost.Bind(Config);
             // 戦闘のたびに国庫に入る税収の倍率 ([Economy] TaxPercent、既定 100% = 本体どおり)
             Patches.TaxIncome.Bind(Config);
@@ -166,7 +166,7 @@ namespace RS2QoL
             Logger.LogInfo("[DialogueAdvance] patched: Core.pause_sa / message_lop2 / put_select / search_ivent / its_enter_sa / its_ivent_move / its_touch_sa (WaitForPress=" + Patches.DialogueAdvance.WaitEnabled + " ByDpad=" + Patches.DialogueAdvance.DpadEnabled + ")");
             Logger.LogInfo("[Growth] patched: Core.btl_counter_add / Work.getBattleCount / Battle.init / Battle.dest (Percent=" + Patches.EnemyGrowth.Percent.Value + " Paused=" + Patches.EnemyGrowth.Paused.Value + " SkipEscape=" + Patches.EnemyGrowth.SkipEscape.Value + ")");
             Logger.LogInfo("[Economy] patched: Core.add_budget (TaxPercent=" + Patches.TaxIncome.Percent.Value + " TaxOnEscape=" + Patches.TaxIncome.OnEscape.Value + ")");
-            Logger.LogInfo("[Spark] patched: Battle.check_get + test_mikiri (HeroMode=" + Patches.SparkBoost.Enabled.Value + " Multiplier=" + Patches.SparkBoost.Multiplier.Value + " HpPercent=" + Patches.SparkBoost.HpPercent.Value + " LevelBonus=" + Patches.SparkBoost.LevelBonus.Value + " Floor=" + Patches.SparkBoost.FloorPercent.Value + "% Gap=" + Patches.SparkBoost.FloorMaxGap.Value + ")");
+            Logger.LogInfo("[Spark] patched: Battle.check_get + test_mikiri (HeroMode=" + Patches.SparkBoost.Enabled.Value + " LastOneStanding=" + Patches.SparkBoost.LastOneStanding.Value + " Multiplier=" + Patches.SparkBoost.Multiplier.Value + " HpPercent=" + Patches.SparkBoost.HpPercent.Value + " LevelBonus=" + Patches.SparkBoost.LevelBonus.Value + " Floor=" + Patches.SparkBoost.FloorPercent.Value + "% Gap=" + Patches.SparkBoost.FloorMaxGap.Value + ")");
             Patches.PartyWeight.LogPatched();
             Patches.WorldScrollSpeed.LogPatched();
             Patches.KeyMap.LogPatched();
