@@ -59,6 +59,7 @@ namespace RS2QoL
             public int Scroll;
             public bool ShowPressed;          // 「押しているボタン」行を出す (ボタン割り当てページ)
             public bool ShowKeys;             // ShowPressed の中身をキーボードにする (キー割り当てページ)
+            public Func<string> TitleRight;   // タイトルと同じ行の右側に赤で出す文字 (null か空なら無し。ShowPressed と同じ場所)
             public bool LongPage;             // 行数を枠の大きさに数えない (他のページに合わせた行数でスクロールする)
             /// <summary>右下のボタン (とじる / ボタン割り当て) を除いた行数。ボタンは常に Items の末尾。</summary>
             public int RowCount { get { int n = Items.Count; while (n > 0 && Items[n - 1].IsButton) n--; return n; } }
@@ -710,6 +711,26 @@ namespace RS2QoL
                 Selectable = false,
             });
 
+            // 弔いの鍛冶: 皇帝が死んで継承すると 1 回たまり、開発所で国庫を使わずに開発できる。回数はセーブに入る
+            p = AddPage(MourningForge.NAME);
+            // ためている回数はセーブの値なので設定画面からは変えず、タイトルの行の右に赤で出すだけ (ユーザー 2026-10-21)
+            p.TitleRight = () => "ためている回数: " + MourningForge.StockLabel();
+            AddToggle(p, "皇帝が死んで継承すると、国庫を使わず 1 回開発できる", MourningForge.Enabled);
+            p.Items.Add(new Item
+            {
+                Label = "ためられる上限",
+                Value = () => MourningForge.MaxLabel(),
+                Left = () => MourningForge.CycleMax(-1),
+                Entry = MourningForge.MaxStock,
+                Right = () => MourningForge.CycleMax(+1),
+                Activate = () => MourningForge.CycleMax(+1),
+                Changed = () => MourningForge.Max != 9,
+            });
+            // 説明行は枠の幅 (全角 30 字ほど) に収まる長さにする (長いと折り返して行からはみ出す)。
+            // 本体の仕組み (年代ごとに各種類 1 回など) や年代ジャンプで 0 に戻ることは、分かった上で事務的に使われないよう書かない (ユーザー 2026-10-21)
+            p.Items.Add(new Item { Label = "全滅か、勝っても皇帝の LP が 0 の時の継承で 1 回たまる", Selectable = false });
+            p.Items.Add(new Item { Label = "開発所で「金は要りません」と申し出て、国庫は減らない", Selectable = false });
+
             p = AddPage("その他");
             AddToggle(p, "防具・盾の詳しい防御力を表示", ArmorInfo.Enabled);
             AddToggle(p, "店で装備している仲間に E を表示", ShopEquipMark.Enabled);
@@ -1338,6 +1359,12 @@ namespace RS2QoL
             {
                 string pressed = page.ShowKeys ? "押しているキー: " + KeyMap.PressedText() : "押しているボタン: " + PressedPhysicalText();
                 UiParts.Label(titleR, pressed, s_statusRight);
+            }
+            else if (page.TitleRight != null)
+            {
+                // 弔いの鍛冶ページでは、ためている回数 (セーブの値。設定画面からは変えない) を同じ場所に赤で出す
+                string tr = page.TitleRight();
+                if (!string.IsNullOrEmpty(tr)) UiParts.Label(titleR, tr, s_statusRight);
             }
             CaptureKey();   // キー割り当ての「押して決める」中なら拾う (マウスで他のページに移っていても)
             cy += lineH;

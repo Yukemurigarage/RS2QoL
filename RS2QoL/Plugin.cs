@@ -152,6 +152,8 @@ namespace RS2QoL
             Patches.Wallet.Bind(Config);
             // どこでも大臣の画面と、フィールドの LB / RB の役目 ([Economy] FieldLB / FieldRB、既定 LB = 画面、RB = 引き出す)
             Patches.TreasuryScreen.Bind(Config);
+            // 弔いの鍛冶: 皇帝が死んで継承すると 1 回たまり、開発所で国庫を使わずに開発できる ([MourningForge] Enabled、既定 Off = 本体どおり)
+            Patches.MourningForge.Bind(Config);
             // 長時間プレイで重くなる問題の計測 ([Diagnostics] MemoryLogSeconds、Enabled とは独立、既定 0 = 出さない)
             Patches.MemDiag.Bind(Config);
             // 画面のボタンの丸文字 (Ⓐ Ⓑ Ⓧ) と矢印の L / R の文字を消す ([Display] HideButtonGlyphs、既定 On)
@@ -161,6 +163,7 @@ namespace RS2QoL
             var harmony = new Harmony(MyPluginInfo.PLUGIN_GUID);
             harmony.PatchAll();
             Logger.LogInfo("Harmony patches applied");
+            Patches.MourningForge.LogPatched();
             Logger.LogInfo("[TitleSkip] patched: InputManager.GetMenuInput (AnyButtonSkip=" + Patches.TitleSkip.AnyButton.Value + ")");
             Logger.LogInfo("[MessageSpeed] patched: Core.message_lop (MessageSpeed=" + Patches.MessageSpeed.Mode.Value + ")");
             Logger.LogInfo("[AutoDash] patched: Core.move_human_sub_r (AutoDash=" + Patches.AutoDash.Enabled.Value + ")");

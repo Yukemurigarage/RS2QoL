@@ -212,11 +212,18 @@ namespace RS2QoL.Patches
             ShowNotice(msg);
         }
 
-        public static void ShowNotice(string text)
+        public static void ShowNotice(string text) { ShowNotice(text, TITLE, true, NOTICE_SECONDS); }
+
+        /// <summary>見出しと大臣の絵の有無を指定して出す (弔いの鍛冶など、どこでも大臣以外の知らせ用)。</summary>
+        public static void ShowNotice(string text, string title, bool withMinister, float seconds)
         {
             s_notice = text;
-            s_noticeUntil = Time.realtimeSinceStartup + NOTICE_SECONDS;
+            s_noticeTitle = title;
+            s_noticeMinister = withMinister;
+            s_noticeUntil = Time.realtimeSinceStartup + seconds;
         }
+        private static string s_noticeTitle = TITLE;
+        private static bool s_noticeMinister = true;
 
         private static GUIStyle s_stylePaper;
         private static GUIStyle s_styleTitle;
@@ -250,14 +257,15 @@ namespace RS2QoL.Patches
             }
             // 大臣の絵 (どこでも大臣の窓と同じ大きさ = TreasuryScreen.MinisterDot 倍) + 文字 2 行 (見出し「どこでも大臣」と結果。
             // 文字は小さいまま、2 行まとめて絵の中央の高さに)。幅は文字の実測、画面に入らなければ切る
-            bool minister = TreasuryScreen.HasMinister;
+            bool minister = s_noticeMinister && TreasuryScreen.HasMinister;
+            string title = s_noticeTitle;
             float spr = minister ? TreasuryScreen.MinisterDot * TreasuryScreen.MinisterDots : 0f;
             // 左右の余白は上下よりたっぷり取る (お金の話なので窮屈に見せない)
             float padY = Mathf.Round(size * 0.5f);
             float padX = Mathf.Round(size * 1.6f);
             float gap = minister ? Mathf.Round(size * 0.9f) : 0f;
             float lineH = Mathf.Round(size * 1.3f);
-            float textW = Mathf.Max(s_style.CalcSize(new GUIContent(TITLE)).x, s_style.CalcSize(new GUIContent(s_notice)).x) + size * 0.3f;
+            float textW = Mathf.Max(s_style.CalcSize(new GUIContent(title)).x, s_style.CalcSize(new GUIContent(s_notice)).x) + size * 0.3f;
             float w = Mathf.Min(Screen.width - size * 2, padX * 2 + spr + gap + textW);
             float h = Mathf.Max(spr, lineH * 2) + padY * 2;
             Rect r = new Rect(Mathf.Round((Screen.width - w) / 2), Mathf.Round(size * 1.5f), Mathf.Round(w), Mathf.Round(h));
@@ -267,7 +275,7 @@ namespace RS2QoL.Patches
             if (minister) TreasuryScreen.DrawMinister(new Rect(r.x + padX, r.y + Mathf.Round((h - spr) / 2f), spr, spr));
             float tx = r.x + padX + spr + gap;
             float ty = r.y + Mathf.Round((h - lineH * 2) / 2f);
-            UiParts.Label(new Rect(tx, ty, r.xMax - padX - tx, lineH), TITLE, paper ? s_styleTitlePaper : s_styleTitle);
+            UiParts.Label(new Rect(tx, ty, r.xMax - padX - tx, lineH), title, paper ? s_styleTitlePaper : s_styleTitle);
             UiParts.Label(new Rect(tx, ty + lineH, r.xMax - padX - tx, lineH), s_notice, paper ? s_stylePaper : s_style);
         }
     }
@@ -452,53 +460,15 @@ namespace RS2QoL.Patches
             }
             if (full) sb.Append('\n').Append("財布もいっぱいになった。");
 
-            byte[] body = Encode(sb.ToString());
+            byte[] body = ScriptText.Encode(sb.ToString(), "[Economy] gold chest message:");
             if (body == null) return true;
 
-            if (c.name_work.Length < body.Length)
-            {
-                c.name_work = new byte[System.Math.Max(256, body.Length)];
-                c.mestbl[2] = c.name_work;
-            }
-            System.Array.Copy(body, c.name_work, body.Length);
-
-            // 本体の ten_put と同じ「サブレベルに入る」手順。戻り先だけ、飛ばした本文の次にする
-            c.message_stok[c.message_level * 5] = p + skip;
-            c.message_stok[c.message_level * 5 + 3] = c.end_mess_adrs;
-            c.message_stok[c.message_level * 5 + 2] = c.mess_type;
-            c.message_level++;
-            Core.mess_adrs = 0;
-            c.end_mess_adrs = body.Length;
-            c.mess_type = 2;
+            // 本体の ten_put と同じ「サブレベルに入る」手順。戻り先だけ、飛ばした本文の次にする (ScriptText.EnterSublevel)
+            ScriptText.EnterSublevel(c, body, p + skip);
             Plugin.Log.LogInfo("[Economy] gold chest message: wallet +" + fill + ", treasury +" + gain + (full ? " (wallet full)" : ""));
             return false;
         }
 
-        private static bool Match(byte[] a, int at, byte[] pat)
-        {
-            for (int i = 0; i < pat.Length; i++) if (a[at + i] != pat[i]) return false;
-            return true;
-        }
-
-        /// <summary>メッセージの本文バイト列にする。'\n' は改行命令、数字は全角、他は Window.fonttbl の添字。無い文字があれば null。</summary>
-        private static byte[] Encode(string text)
-        {
-            System.Collections.Generic.List<byte> b = new System.Collections.Generic.List<byte>(text.Length * 2);
-            string tbl = Window.fonttbl;
-            foreach (char ch in text)
-            {
-                if (ch == '\n') { b.Add(NL); continue; }
-                if (ch >= '0' && ch <= '9') { b.Add(35); b.Add((byte)(ch - '0')); continue; }   // 8960 + 値 = 全角数字
-                int idx = tbl.IndexOf(ch, 80);                                                   // 80 未満は命令と重なるので 2 バイト形を探す
-                if (idx < 0)
-                {
-                    Plugin.Log.LogWarning("[Economy] gold chest message: no glyph for '" + ch + "', leaving vanilla text");
-                    return null;
-                }
-                if (idx < 256) b.Add((byte)idx);
-                else { int code = idx + 7936; b.Add((byte)(code >> 8)); b.Add((byte)(code & 0xFF)); }
-            }
-            return b.ToArray();
-        }
+        private static bool Match(byte[] a, int at, byte[] pat) { return ScriptText.Match(a, at, pat); }
     }
 }
