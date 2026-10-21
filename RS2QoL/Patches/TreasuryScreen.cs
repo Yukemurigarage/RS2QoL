@@ -680,7 +680,7 @@ namespace RS2QoL.Patches
             s_lineSel = new GUIStyle(s_line);
             s_lineSel.normal.textColor = Color.black;
             s_lineDim = new GUIStyle(s_line);
-            s_lineDim.normal.textColor = new Color(0.32f, 0.3f, 0.3f);
+            s_lineDim.normal.textColor = new Color(0.26f, 0.24f, 0.23f);   // 薄い灰色は読みにくい (ユーザー 2026-10-20) ので濃いめ
             s_lineRed = new GUIStyle(s_line);
             s_lineRed.normal.textColor = new Color(0.6f, 0.04f, 0.02f);
             s_title = new GUIStyle(s_line);

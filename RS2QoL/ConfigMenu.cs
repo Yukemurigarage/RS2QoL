@@ -420,6 +420,7 @@ namespace RS2QoL
             AddToggle(p, "倍速中もダメージ数字の見た目は等倍と同じに", DamagePop.RealTime);
             AddToggle(p, "結果表示はボタンを押すまで待つ", BattleResult.WaitForPress);
             AddToggle(p, "L / R で退却 / 防御 (スーファミ版)", BattleLR.Enabled);
+            AddToggle(p, "全滅した時に「戦闘の振り返り」の窓を出す", BattleReview.Enabled);
 
             p = AddPage("戦闘の見た目");
             AddToggle(p, "ダメージ数字をスーファミ版のドット文字で", DamageFont.Sfc);
@@ -1680,7 +1681,7 @@ namespace RS2QoL
             {
                 s_line.normal.textColor = new Color(0.08f, 0.06f, 0.04f);
                 s_lineSel.normal.textColor = new Color(0f, 0f, 0f);
-                s_lineDim.normal.textColor = new Color(0.38f, 0.34f, 0.3f);
+                s_lineDim.normal.textColor = new Color(0.3f, 0.26f, 0.22f);   // 薄い灰色は読みにくい (ユーザー 2026-10-20) ので濃いめ
                 s_section.normal.textColor = s_lineSel.normal.textColor;
                 s_title.normal.textColor = s_lineSel.normal.textColor;
                 s_footer.normal.textColor = new Color(0.2f, 0.16f, 0.13f);

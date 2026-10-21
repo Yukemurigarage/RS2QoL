@@ -144,6 +144,8 @@ namespace RS2QoL
             Patches.PlayerGrowth.Bind(Config);
             // ヒーローモード: 瀕死 (膝をつく HP) か最後の 1 人の味方が攻撃した時だけ技をひらめく確率を倍にする ([Spark] HeroMode、既定 Off = 本体どおり)
             Patches.SparkBoost.Bind(Config);
+            // 全滅した時に、継承の画面の前に「戦闘の振り返り」の窓 (敵の弱点 / 敵の技と見切り / こちらの行動) を出す ([BattleReview] Enabled、既定 On)
+            Patches.BattleReview.Bind(Config);
             // 戦闘のたびに国庫に入る税収の倍率 ([Economy] TaxPercent、既定 100% = 本体どおり)
             Patches.TaxIncome.Bind(Config);
             // 所持金の上限 ([Economy] WalletMax、既定 65535) と、どこでも大臣 (国庫 ⇄ 所持金、[Economy] TreasuryFloor、ボタン割り当て Withdraw)
@@ -229,6 +231,7 @@ namespace RS2QoL
         // MOD 設定画面の描画。入力は ConfigMenuGatePatch (Util.GetKeypadState の最終段) で処理する
         private void OnGUI()
         {
+            Patches.BattleReview.Draw();      // 背景を黒く塗るので一番下に (診断ログの印などの小窓が隠れないように。ユーザー 2026-10-21)
             Patches.GameSpeed.DrawIndicator();
             Patches.InputDiag.DrawBadge();
             Patches.Wallet.DrawNotice();

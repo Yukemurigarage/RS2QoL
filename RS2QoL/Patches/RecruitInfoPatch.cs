@@ -1233,7 +1233,7 @@ namespace RS2QoL.Patches
             s_line.normal.textColor = new Color(0.12f, 0.08f, 0.05f);
             if (s_font != null) s_line.font = s_font;
             s_dim = new GUIStyle(s_line);
-            s_dim.normal.textColor = new Color(0.4f, 0.35f, 0.3f);
+            s_dim.normal.textColor = new Color(0.3f, 0.26f, 0.22f);   // 薄い灰色は読みにくい (ユーザー 2026-10-20) ので濃いめ
             s_hint = new GUIStyle(s_dim);
             s_hint.fontSize = Mathf.Max(10, fontSize - 2);
             s_title = new GUIStyle(s_line);
