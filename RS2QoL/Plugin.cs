@@ -75,6 +75,8 @@ namespace RS2QoL
             Patches.DamagePos.Bind(Config);
             // ダメージ数字をスーパーファミコン版のドット文字で出す ([Battle] DamageDigitsSfc、既定 On)
             Patches.DamageFont.Bind(Config);
+            // 弱点をついた時のモンスターのダメージ数字を黄色に ([Battle] WeakPointDamageColor、既定 On)
+            Patches.WeakPointColor.Bind(Config);
             // 味方の HP / LP をスーパーファミコン版と同じ「現在値/最大値」のドット文字で出す ([Battle] PartyHpSfc、既定 On)
             Patches.PartyHpSfc.Bind(Config);
             // 戦闘のモンスターの絵の大きさ ([Battle] MonsterScalePercent、既定 107 = スーパーファミコン版と同じ見かけ)
@@ -164,6 +166,7 @@ namespace RS2QoL
             harmony.PatchAll();
             Logger.LogInfo("Harmony patches applied");
             Patches.MourningForge.LogPatched();
+            Patches.WeakPointColor.LogPatched();
             Logger.LogInfo("[TitleSkip] patched: InputManager.GetMenuInput (AnyButtonSkip=" + Patches.TitleSkip.AnyButton.Value + ")");
             Logger.LogInfo("[MessageSpeed] patched: Core.message_lop (MessageSpeed=" + Patches.MessageSpeed.Mode.Value + ")");
             Logger.LogInfo("[AutoDash] patched: Core.move_human_sub_r (AutoDash=" + Patches.AutoDash.Enabled.Value + ")");
@@ -234,6 +237,7 @@ namespace RS2QoL
         // MOD 設定画面の描画。入力は ConfigMenuGatePatch (Util.GetKeypadState の最終段) で処理する
         private void OnGUI()
         {
+            Patches.MourningScene.Draw();     // 弔いの鍛冶の死の演出 (暗転の中の皇帝と窓)。画面を黒く塗るので一番下に
             Patches.BattleReview.Draw();      // 背景を黒く塗るので一番下に (診断ログの印などの小窓が隠れないように。ユーザー 2026-10-21)
             Patches.GameSpeed.DrawIndicator();
             Patches.InputDiag.DrawBadge();

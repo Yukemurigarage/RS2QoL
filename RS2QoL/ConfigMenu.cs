@@ -162,7 +162,7 @@ namespace RS2QoL
                 Activate = () => { KeyMap.ResetToDefault(); s_status = "既定に戻しました"; },
             });
             p.Items.Add(new Item { Label = "方向は W A S D と矢印キー (固定)", Selectable = false });
-            p.Items.Add(new Item { Label = "F1 は設定画面、Esc は終了ダイアログ、F8 は診断ログの ON/OFF、F7 はその目印 (固定)", Selectable = false });
+            p.Items.Add(new Item { Label = "F1 設定画面 / Esc 終了 / F8 診断ログ / F7 その目印 (固定)", Selectable = false });   // 全角 30 字ほどまで (長いと 2 行に折れて見切れる。ユーザー 2026-10-22)
 
             p = AddPage("音量");
             AddPercent(p, "全体", AudioVolume.Master);
@@ -434,6 +434,7 @@ namespace RS2QoL
                 Right = () => DamageFont.Cycle(+1),
                 Activate = () => DamageFont.Cycle(+1),
             });
+            AddToggle(p, "弱点をついたダメージ数字を黄色に", WeakPointColor.Enabled);
             AddToggle(p, "味方の HP / LP をスーファミ版の「現在/最大」で", PartyHpSfc.Enabled);
             p.Items.Add(new Item
             {
@@ -602,11 +603,7 @@ namespace RS2QoL
                 Changed = () => SparkBoost.GapChanged(),
             });
             // 説明行は枠の幅 (全角 30 字ほど) に収まる長さにする
-            p.Items.Add(new Item { Label = "ひらめく確率は「敵の閃きレベル − 技の難度」の差で決まる", Selectable = false });
-            p.Items.Add(new Item { Label = "差 0 で 19.6 %、差 7 以上は 11.8 %、差 −6 以下は 0 %", Selectable = false });
-            p.Items.Add(new Item { Label = "瀕死か最後の 1 人で攻撃した時だけ、敵のレベルを足して引き直し、倍にする", Selectable = false });
-            p.Items.Add(new Item { Label = "それでも 0 % の技は、覚醒判定で表の最初の 1 つだけ抽選する", Selectable = false });
-            p.Items.Add(new Item { Label = "見切り (敵の技を受けて覚える) も同じ式なので、瀕死で受けた時も同じ", Selectable = false });
+            // 仕組みの説明の行は出さない (README に書いてあることを設定画面で繰り返さない。ユーザー 2026-10-22)
 
             // 国庫: 税収は戦闘のたびに自動で国庫に入る (玉座に戻る必要はない)。その倍率と、今の国庫・1 戦あたりの額の表示
             p = AddPage("国庫");

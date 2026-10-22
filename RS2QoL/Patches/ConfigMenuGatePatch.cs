@@ -15,6 +15,7 @@ namespace RS2QoL.Patches
             GameSpeed.HandleToggleButton();
             __result = ConfigMenu.Tick(__result);
             __result = RecruitInfo.Tick(__result);   // 仲間候補のステータスの窓: 開いている間は入力を奪う
+            __result = MourningScene.Tick(__result);  // 弔いの鍛冶の死の演出の窓: 同上 (振り返りの前に出る)
             __result = BattleReview.Tick(__result);  // 全滅後の戦闘の振り返りの窓: 同上
         }
     }

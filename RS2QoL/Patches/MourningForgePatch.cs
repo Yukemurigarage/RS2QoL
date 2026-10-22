@@ -237,7 +237,10 @@ namespace RS2QoL.Patches
 
         // ---- ためる ----
 
-        public static void OnBattleStart() { s_wipePending = false; }
+        /// <summary>死の演出 (MourningScene) で既に増やした (本体の koutei_select / koutei_select2 では増やさない)。</summary>
+        private static bool s_sceneGranted;
+
+        public static void OnBattleStart() { s_wipePending = false; s_sceneGranted = false; MourningScene.Reset(); }
 
         public static void OnBattleEnd()
         {
@@ -245,31 +248,64 @@ namespace RS2QoL.Patches
             s_wipePending = result == RESULT_WIPE;
         }
 
-        public static void OnReset() { s_wipePending = false; s_armed = null; }
+        public static void OnReset() { s_wipePending = false; s_sceneGranted = false; s_armed = null; MourningScene.Reset(); }
+
+        /// <summary>
+        /// 死による継承がこの後に来る (死の演出を出す条件): 全滅の控えがあるか、皇帝の LP (memberdata[0][18]) が 0。
+        /// 勝ったが皇帝の LP 0 の経路 (msg 2059) は hp_full の後に koutei_select2 なので、暗転の時点では LP がまだ 0。
+        /// </summary>
+        public static bool DeathPending
+        {
+            get
+            {
+                if (s_wipePending) return true;
+                int[] m = Work.memberdata != null && Work.memberdata.Length > 0 ? Work.memberdata[0] : null;
+                return m != null && m.Length > 18 && (m[18] & 0xFF) == 0;
+            }
+        }
+
+        /// <summary>死の演出の窓を開く時に増やし、窓に出す文を返す。本体の継承の Postfix では二重に増やさない。</summary>
+        public static string GrantForScene()
+        {
+            s_sceneGranted = true;
+            return Grant("death scene", false);
+        }
 
         /// <summary>皇帝の LP が 0 で勝った後の継承 (Core.koutei_select2)。</summary>
-        public static void OnEmperorDeath() { Grant("emperor LP 0"); }
+        public static void OnEmperorDeath()
+        {
+            if (s_sceneGranted) { s_sceneGranted = false; s_wipePending = false; return; }
+            Grant("emperor LP 0", true);
+        }
 
         /// <summary>継承の選択 (Core.koutei_select)。全滅の直後だけ数える (年代ジャンプからも呼ばれる)。</summary>
         public static void OnSuccession()
         {
+            if (s_sceneGranted) { s_sceneGranted = false; s_wipePending = false; return; }
             if (!s_wipePending) return;
             s_wipePending = false;
-            Grant("party wiped");
+            Grant("party wiped", true);
         }
 
-        private static void Grant(string why)
+        /// <summary>1 回ぶん増やして知らせの文を返す。notice なら画面上部の知らせにも出す (演出で出す時は出さない)。</summary>
+        private static string Grant(string why, bool notice)
         {
-            if (!On) return;
+            if (!On) return "";
             int before = Stock;
+            string text;
             if (before >= Max)
             {
                 Plugin.Log.LogInfo(TAG + " " + why + ": stock already at max " + Max);
-                return;
+                text = "亡き陛下を弔い、職人が腕で報いると誓う (残り " + Stock + " 回 = 上限)";
             }
-            Stock = before + 1;
-            Plugin.Log.LogInfo(TAG + " " + why + ": stock " + before + " -> " + Stock);
-            Wallet.ShowNotice("亡き陛下を弔い、職人が腕で報いると誓う (残り" + Stock + " 回)", NAME, false, 5f);
+            else
+            {
+                Stock = before + 1;
+                Plugin.Log.LogInfo(TAG + " " + why + ": stock " + before + " -> " + Stock);
+                text = "亡き陛下を弔い、職人が腕で報いると誓う (残り " + Stock + " 回)";
+            }
+            if (notice && before < Max) Wallet.ShowNotice(text, NAME, false, 5f);
+            return text;
         }
 
         // ---- 設定画面用 ----
@@ -287,7 +323,7 @@ namespace RS2QoL.Patches
 
         public static void LogPatched()
         {
-            Plugin.Log.LogInfo(TAG + " patched: Core.message_r / budget_sep / flash_select / window_small_set / sub_budget / koutei_select / koutei_select2 / routine_reset, Battle.init / dest");
+            Plugin.Log.LogInfo(TAG + " patched: Core.message_r / budget_sep / flash_select / window_small_set / sub_budget / koutei_select / koutei_select2 / routine_reset / fade_out_on_message (death scene), Battle.init / dest");
         }
     }
 
