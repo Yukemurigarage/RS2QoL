@@ -47,7 +47,8 @@ namespace RS2QoL.Patches
             s_repStorage = ItemStorage.StoredList().Count + " 種類";   // 持ち物の「N / 32」は分かりにくいので出さない (ユーザー 2026-10-24)
             int dev = ScriptReader.Flag(115), left = ScriptReader.NewFlag(56);
             string kind = (dev & 4) != 0 ? "武器" : (dev & 8) != 0 ? "防具" : null;
-            s_repDev = kind == null ? "開発なし" : kind + "を開発中 (" + (left > 0 ? "あと " + left + " 戦" : "まもなく完成") + ")";
+            // 残り 0 = 仕上がっている (開発所の script msg 2068 / 2069 は new_flag 56 == 0 で渡す。「まもなく完成」と出していたのは誤り、ユーザー 2026-10-24)
+            s_repDev = kind == null ? "開発なし" : left > 0 ? kind + "を開発中 (あと " + left + " 戦)" : kind + "が仕上がっています (開発所へ)";
             int stock = 0;
             try { stock = MourningForge.Stock; } catch { }
             if (stock > 0) s_repDev += "・弔い " + stock + " 回";

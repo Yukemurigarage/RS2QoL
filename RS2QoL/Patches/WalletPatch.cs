@@ -220,10 +220,21 @@ namespace RS2QoL.Patches
             s_notice = text;
             s_noticeTitle = title;
             s_noticeMinister = withMinister;
+            s_noticePicture = null;
             s_noticeUntil = Time.realtimeSinceStartup + seconds;
+        }
+
+        /// <summary>大臣の代わりに別の絵を添えて出す (開発所の職人など)。picture は (枠, 1 ドットの px) で呼ばれ、枠の幅は pictureDots ドット、高さは大臣と同じ。</summary>
+        public static void ShowNotice(string text, string title, System.Action<Rect, int> picture, int pictureDots, float seconds)
+        {
+            ShowNotice(text, title, false, seconds);
+            s_noticePicture = picture;
+            s_noticePictureDots = pictureDots;
         }
         private static string s_noticeTitle = TITLE;
         private static bool s_noticeMinister = true;
+        private static System.Action<Rect, int> s_noticePicture;
+        private static int s_noticePictureDots;
 
         private static GUIStyle s_stylePaper;
         private static GUIStyle s_styleTitle;
@@ -258,21 +269,29 @@ namespace RS2QoL.Patches
             // 大臣の絵 (どこでもアバロンの窓と同じ大きさ = TreasuryScreen.MinisterDot 倍) + 文字 2 行 (見出し「どこでも金庫番」と結果。
             // 文字は小さいまま、2 行まとめて絵の中央の高さに)。幅は文字の実測、画面に入らなければ切る
             bool minister = s_noticeMinister && TreasuryScreen.HasMinister;
+            bool picture = minister || s_noticePicture != null;
             string title = s_noticeTitle;
-            float spr = minister ? TreasuryScreen.MinisterDot * TreasuryScreen.MinisterDots : 0f;
+            int dot = TreasuryScreen.MinisterDot;
+            float sprH = picture ? dot * TreasuryScreen.MinisterDots : 0f;                       // 絵の高さ (大臣と同じ)
+            float spr = minister ? sprH : s_noticePicture != null ? dot * s_noticePictureDots : 0f;   // 絵の幅
             // 左右の余白は上下よりたっぷり取る (お金の話なので窮屈に見せない)
             float padY = Mathf.Round(size * 0.5f);
             float padX = Mathf.Round(size * 1.6f);
-            float gap = minister ? Mathf.Round(size * 0.9f) : 0f;
+            float gap = picture ? Mathf.Round(size * 0.9f) : 0f;
             float lineH = Mathf.Round(size * 1.3f);
             float textW = Mathf.Max(s_style.CalcSize(new GUIContent(title)).x, s_style.CalcSize(new GUIContent(s_notice)).x) + size * 0.3f;
             float w = Mathf.Min(Screen.width - size * 2, padX * 2 + spr + gap + textW);
-            float h = Mathf.Max(spr, lineH * 2) + padY * 2;
+            float h = Mathf.Max(sprH + (s_noticePicture != null ? dot : 0f), lineH * 2) + padY * 2;   // 職人の歩きのコマは 1 ドット下がる
             Rect r = new Rect(Mathf.Round((Screen.width - w) / 2), Mathf.Round(size * 1.5f), Mathf.Round(w), Mathf.Round(h));
             bool paper = UiParts.DrawPaperWindow(r, true);
             if (!paper) UiParts.DrawDarkBox(r);
             UiParts.Shadow = !paper;
-            if (minister) TreasuryScreen.DrawMinister(new Rect(r.x + padX, r.y + Mathf.Round((h - spr) / 2f), spr, spr));
+            if (minister) TreasuryScreen.DrawMinister(new Rect(r.x + padX, r.y + Mathf.Round((h - sprH) / 2f), spr, sprH));
+            else if (s_noticePicture != null)
+            {
+                try { s_noticePicture(new Rect(r.x + padX, r.y + padY, spr, h - padY * 2), dot); }
+                catch (System.Exception e) { s_noticePicture = null; Plugin.Log.LogWarning("[Economy] notice picture failed: " + e.Message); }
+            }
             float tx = r.x + padX + spr + gap;
             float ty = r.y + Mathf.Round((h - lineH * 2) / 2f);
             UiParts.Label(new Rect(tx, ty, r.xMax - padX - tx, lineH), title, paper ? s_styleTitlePaper : s_styleTitle);

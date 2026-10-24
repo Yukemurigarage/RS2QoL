@@ -37,6 +37,7 @@ namespace RS2QoL.Patches
     {
         public static ConfigEntry<bool> Enabled;
         public static ConfigEntry<bool> LastOneStanding;
+        public static ConfigEntry<bool> SoloPartyOff;
         public static ConfigEntry<int> Multiplier;
         public static ConfigEntry<int> HpPercent;
         public static ConfigEntry<int> LevelBonus;
@@ -75,6 +76,9 @@ namespace RS2QoL.Patches
             LastOneStanding = config.Bind("Spark", "LastOneStanding", true,
                 "ヒーローモードの時、戦える仲間が自分 1 人だけになったら HP に関係なく発動する (瀕死と同じ扱い)。"
                 + "戦えない = HP 0、戦闘不能、石化、気絶、麻痺、眠り、スタン、魅了。false なら HP だけで見る");
+            SoloPartyOff = config.Bind("Spark", "SoloPartyOff", true,
+                "パーティが 1 人だけ (皇帝のひとり旅、仲間を入れていない) の戦闘ではヒーローモードを発動しない (瀕死も最後の 1 人も見ない)。"
+                + "1 人だと毎ターン「最後の 1 人」になり、ひらめきが皇帝に集まって継承で全部渡ってしまうため。false なら 1 人でも発動する");
             Multiplier = config.Bind("Spark", "Multiplier", DEFAULT_MULT,
                 new ConfigDescription("瀕死の時にひらめく確率を何倍にするか (1〜8)。本体の確率は差 (敵の閃きレベル − 技の難度) で 0〜19.6 %、"
                     + "7 以上は 11.8 % で頭打ち。3 なら 11.8 % → 35 %、差 0 の 19.6 % → 59 %",
@@ -105,8 +109,27 @@ namespace RS2QoL.Patches
 
         public static bool LastOne { get { return LastOneStanding == null || LastOneStanding.Value; } }
 
+        public static bool SoloOff { get { return SoloPartyOff == null || SoloPartyOff.Value; } }
+
         /// <summary>直前の判定で発動した理由 (設定画面・ログ用): "瀕死" / "最後の 1 人" / "瀕死・最後の 1 人"。</summary>
         public static string LastReason = "";
+
+        /// <summary>直前の判定が「パーティ 1 人なので発動しない」で止まったか (設定画面の表示用)。</summary>
+        public static bool LastSoloFlag;
+
+        private static bool s_soloLogged;
+
+        /// <summary>戦闘開始 (Battle.init) で呼ぶ: 1 戦 1 回のログを出し直せるようにする。</summary>
+        public static void ResetBattle(Battle b)
+        {
+            s_soloLogged = false;
+            // ヒーローモードが On の時だけ、戦闘開始の人数を 1 行 (1 人の戦闘で止まるかどうかがログで分かるように)
+            if (IsEnabled && b != null)
+                Plugin.Log.LogInfo("[Spark] battle start: member=" + b.member + (SoloOff && IsSoloParty(b) ? " -> hero mode off (SoloPartyOff)" : ""));
+        }
+
+        /// <summary>パーティが 1 人だけの戦闘か。Battle.member は戦闘開始時に partydata[24] (ひとり旅のイベント戦闘は set_memberx / set_emperor で 1)。</summary>
+        public static bool IsSoloParty(Battle b) { return b.member <= 1; }
 
         /// <summary>
         /// 戦える仲間が 1 人だけか。「戦えない」= HP 0、戦闘不能 (LP 0) か石化 (XA[7] & 0xC0、本体 check_die_mem と同じ)、
@@ -139,9 +162,25 @@ namespace RS2QoL.Patches
             return true;
         }
 
-        /// <summary>ヒーローモードが発動する状態か (瀕死、または LastOneStanding で最後の 1 人)。理由を LastReason に入れる。</summary>
+        /// <summary>
+        /// ヒーローモードが発動する状態か (瀕死、または LastOneStanding で最後の 1 人)。理由を LastReason に入れる。
+        /// SoloPartyOff でパーティが 1 人だけなら、瀕死でも発動しない (1 人は常に「最後の 1 人」なので、ひらめきが皇帝に集まるのを防ぐ)。
+        /// </summary>
         public static bool IsAwake(Battle b, int[] actor)
         {
+            LastSoloFlag = false;
+            if (SoloOff && IsSoloParty(b))
+            {
+                LastSoloFlag = true;
+                LastReason = "1 人なので発動しない";
+                if (!s_soloLogged)
+                {
+                    // 1 戦に 1 回だけ (ログで「止めた」ことが分かるように。本体の判定はそのまま走る)
+                    s_soloLogged = true;
+                    Plugin.Log.LogInfo("[Spark] solo party (member " + b.member + "): hero mode off for this battle (hp " + actor[14] + "/" + actor[16] + ")");
+                }
+                return false;
+            }
             bool near = IsNearDeath(actor);
             bool last = LastOne && IsLastStanding(b);
             LastReason = near && last ? "瀕死・最後の 1 人" : near ? "瀕死" : last ? "最後の 1 人" : "";
@@ -312,6 +351,7 @@ namespace RS2QoL.Patches
                 if (LastBoostDiff != LastDiff) s += "差 " + Signed(LastBoostDiff) + ": ";
                 s += Percent(LastBoosted) + " (" + LastReason + ")";
             }
+            else if (LastSoloFlag) s += " (" + LastReason + ")";
             return s;
         }
 
@@ -334,6 +374,13 @@ namespace RS2QoL.Patches
                 + " hp=" + actor[14] + "/" + actor[16] + " why=" + LastReason + " roll=" + roll + " hit=" + hit);
             return hit;
         }
+    }
+
+    /// <summary>戦闘開始。1 人の戦闘のログを 1 戦 1 回に戻す。</summary>
+    [HarmonyPatch(typeof(Battle), "init")]
+    internal static class SparkBoost_init_Patch
+    {
+        private static void Postfix(Battle __instance) { SparkBoost.ResetBattle(__instance); }
     }
 
     /// <summary>1 回の攻撃のひらめき処理の入口 (候補を順に抽選する)。覚醒判定の「1 攻撃 1 回」を数え直す。</summary>
@@ -371,7 +418,8 @@ namespace RS2QoL.Patches
             int baseValue = SparkBoost.TableValue(diff);
             // 瀕死なら「敵の閃きレベル + LevelBonus」の差で表を引き直し、本体の値と引き直した値の大きい方を倍にする
             // (差 0 の山 (50) が +5 で 28 に下がって「瀕死なのに下がる」逆転が起きないように)。倍率 1 かつ足す値 0 なら本体と同じなので止めない
-            bool boost = SparkBoost.IsEnabled && (SparkBoost.Mult > 1 || SparkBoost.Bonus > 0 || SparkBoost.Floor > 0) && SparkBoost.IsAwake(b, actor);
+            SparkBoost.LastSoloFlag = false;       // IsAwake を呼ばない時 (ヒーローモード Off) に前回の値が残らないように
+            bool boost =SparkBoost.IsEnabled && (SparkBoost.Mult > 1 || SparkBoost.Bonus > 0 || SparkBoost.Floor > 0) && SparkBoost.IsAwake(b, actor);
             int boostDiff = diff;
             int boosted = baseValue;
             bool floor = false;

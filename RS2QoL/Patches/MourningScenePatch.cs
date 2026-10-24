@@ -143,6 +143,27 @@ namespace RS2QoL.Patches
 
         private static bool HasSmith(int i) { return s_smith[i] != null && s_smith[i][0] != null; }
 
+        // ---- 他の知らせ (開発所の仕上がり) から職人 2 人を借りる ----
+
+        /// <summary>職人 2 人が向かい合う絵の幅 (本体のドット数。1 人 FRAME + 間 2 ドット + 1 人 FRAME)。</summary>
+        public const int SmithPairDots = FRAME * 2 + 2;
+
+        /// <summary>職人の絵が組めているか (初回に組む)。</summary>
+        public static bool SmithsReady()
+        {
+            EnsureParts();
+            return HasSmith(0) || HasSmith(1);
+        }
+
+        /// <summary>職人 2 人を r の中に向かい合わせて描く (左 = 武器の職人が右向き、右 = 防具の職人が左向き)。t0 は歩きの位相の起点。</summary>
+        public static void DrawSmithPair(Rect r, int dot, float t0)
+        {
+            float spr = FRAME * dot;
+            float y = r.y + Mathf.Round((r.height - spr - dot) / 2f);
+            if (HasSmith(0)) DrawSmith(new Rect(r.x, y, spr, spr), 0, true, dot, t0);
+            if (HasSmith(1)) DrawSmith(new Rect(r.xMax - spr, y, spr, spr), 1, false, dot, t0);
+        }
+
         private static void Close()
         {
             if (s_phase != Phase.Open) return;
@@ -303,8 +324,8 @@ namespace RS2QoL.Patches
             UiParts.Shadow = !paper;
             float cy = r.y + padY;
             float sy = cy + Mathf.Round((bodyH - spr - dot) / 2f);
-            if (left) DrawSmith(new Rect(r.x + padX, sy, spr, spr), 0, true, dot);              // 左の職人は右を向く
-            if (right) DrawSmith(new Rect(r.xMax - padX - spr, sy, spr, spr), 1, false, dot);   // 右の職人は左を向く
+            if (left) DrawSmith(new Rect(r.x + padX, sy, spr, spr), 0, true, dot, s_phaseStart);              // 左の職人は右を向く
+            if (right) DrawSmith(new Rect(r.xMax - padX - spr, sy, spr, spr), 1, false, dot, s_phaseStart);   // 右の職人は左を向く
             float tx = r.x + padX + (left ? spr + gap : 0f);
             float textRight = r.xMax - padX - (right ? spr + gap : 0f);
             float ty = cy + Mathf.Round((bodyH - lineH * 3) / 2f);
@@ -323,9 +344,9 @@ namespace RS2QoL.Patches
         }
 
         /// <summary>職人 i を横向きで (mirror = 右向き = 左向きのコマの反転)。立ちと歩きのコマを交互に (歩きは 1 ドット下) で作業中に見せる。</summary>
-        private static void DrawSmith(Rect r, int i, bool mirror, int dot)
+        private static void DrawSmith(Rect r, int i, bool mirror, int dot, float t0)
         {
-            bool walk = s_smith[i][1] != null && ((int)((Time.realtimeSinceStartup - s_phaseStart + i * ANIM_SECONDS / 2f) / ANIM_SECONDS) & 1) != 0;
+            bool walk = s_smith[i][1] != null && ((int)((Time.realtimeSinceStartup - t0 + i * ANIM_SECONDS / 2f) / ANIM_SECONDS) & 1) != 0;
             Texture2D t = walk ? s_smith[i][1] : s_smith[i][0];
             if (walk) r.y += dot;
             Color old = GUI.color;

@@ -552,6 +552,7 @@ namespace RS2QoL
             });
             AddToggle(p, "瀕死の味方はひらめきやすい (ヒーローモード)", SparkBoost.Enabled);
             AddToggle(p, "戦える仲間が 1 人だけなら HP に関係なく発動", SparkBoost.LastOneStanding);
+            AddToggle(p, "パーティが 1 人だけの戦闘では発動しない", SparkBoost.SoloPartyOff);
             p.Items.Add(new Item
             {
                 Label = "ひらめく確率の倍率",
@@ -631,6 +632,7 @@ namespace RS2QoL
                 Changed = () => TaxIncome.Percent.Value != 100,
             });
             AddToggle(p, "退却した戦闘でも税収を入れる (本体どおり)", TaxIncome.OnEscape);
+            AddToggle(p, "開発所の開発が仕上がったら戦闘の後に知らせる", DevNotice.Enabled);
             p.Items.Add(new Item
             {
                 Label = "敵の強さ・味方の成長・宝箱の N 万クラウン・施設の費用は変わらない",
