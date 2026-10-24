@@ -26,7 +26,7 @@ namespace RS2QoL
         private const float WINDOW_UV_INSET = 3f / 128f; // CBattleWindow.SetUVAdjust(3) と同じ、端の滲み防止
 
         private const string WallpaperFile = "menu/wallpaper/wallpaper_01.png"; // MenuBackground の MAIN_MENU (960x540 の羊皮紙)
-        private const string WallpaperGrayFile = "menu/wallpaper/wallpaper_05.png"; // MenuBackground の WAREHOUSE (倉庫画面の灰色の石の紙。どこでも大臣の画面用)
+        private const string WallpaperGrayFile = "menu/wallpaper/wallpaper_05.png"; // MenuBackground の WAREHOUSE (倉庫画面の灰色の石の紙。どこでもアバロンの窓用)
         // 枠の中に壁紙を敷く時の寸法 (仮想画面 px)。角の絵 btlwdw_08 (128px = 32 仮想px) を測ると、外側の円弧の半径 ≈ 70px、
         // 縁 (黒線 + 白い帯) の幅 ≈ 15px なので、壁紙は縁の内側 (≈ 4 仮想px) から、角は同心の半径 ≈ 54px (≈ 13.5 仮想px) で丸める
         private const float PAPER_INSET = 4f;
@@ -43,6 +43,12 @@ namespace RS2QoL
 
         /// <summary>Label が黒い影を付けるか (青灰色の枠の上では付け、羊皮紙の上では付けない)。</summary>
         public static bool Shadow = true;
+
+        /// <summary>
+        /// 紙 (羊皮紙・灰色の石の紙) の上の「薄い」文字の色。設定画面・どこでもアバロン・仲間の窓・戦闘の振り返りで共通。
+        /// 0.3 の灰茶でもまだ読みにくい (ユーザー 2026-10-24「見にくかったら文字があっても意味がない」) ので、本文 (0.08) に近い濃さにし、区別は僅かに残す。
+        /// </summary>
+        public static readonly Color DimPaper = new Color(0.18f, 0.15f, 0.12f);
 
         /// <summary>仮想画面 (960x540) の 1px が実画面で何 px か。</summary>
         public static float Unit { get { return Mathf.Max(0.5f, Screen.height / 540f); } }
@@ -89,6 +95,44 @@ namespace RS2QoL
             }
             Plugin.Log.LogInfo(string.Format("[UiParts] window={0} cursor={1} arrows={2} close={3} wallpaper={4} quill={5}",
                 s_window != null, s_cursor != null, s_arrowL != null && s_arrowR != null, s_btnClose != null, s_wallpaper != null, s_quill != null));
+        }
+
+        // 品物のアイコン (本体の倉庫・アイテム画面の名前の左の絵)。本体 Menu.ItemIconDrawBase は ID の範囲 (item_symbol_dsp_tbl) で 17 枚の PNG から
+        // 1 枚を選び (menu/item/item_00..07, 10..17, 20.png)、MenuTextureManager で 0.35 倍に描く。MenuTextureManager の実体はメニューを閉じると
+        // 破棄されるので、ここで自前に読んで持ち続ける (遅延読み込み、1 枚ずつキャッシュ)。
+        private static readonly int[] ITEM_ICON_BOUNDS = { 14, 28, 38, 50, 64, 74, 87, 94, 96, 112, 136, 144, 152, 160, 168, 192, 208, 255 };
+        private static readonly string[] ITEM_ICON_FILES = {
+            "menu/item/item_00.png", "menu/item/item_01.png", "menu/item/item_02.png", "menu/item/item_03.png",
+            "menu/item/item_04.png", "menu/item/item_05.png", "menu/item/item_06.png", "menu/item/item_07.png",
+            "menu/item/item_10.png", "menu/item/item_11.png", "menu/item/item_12.png", "menu/item/item_13.png",
+            "menu/item/item_14.png", "menu/item/item_15.png", "menu/item/item_16.png", "menu/item/item_17.png",
+            "menu/item/item_20.png", "menu/item/item_21.png" };
+        private static readonly Texture2D[] s_itemIcons = new Texture2D[ITEM_ICON_FILES.Length];
+        private static readonly bool[] s_itemIconTried = new bool[ITEM_ICON_FILES.Length];
+
+        /// <summary>品物 ID のアイコン (無ければ null)。</summary>
+        public static Texture2D ItemIcon(int id)
+        {
+            int i = 0;
+            while (i < ITEM_ICON_BOUNDS.Length && id >= ITEM_ICON_BOUNDS[i]) i++;
+            if (i >= ITEM_ICON_FILES.Length) i = ITEM_ICON_FILES.Length - 1;
+            if (!s_itemIconTried[i])
+            {
+                s_itemIconTried[i] = true;
+                s_itemIcons[i] = LoadOwn(ITEM_ICON_FILES[i]);
+                if (s_itemIcons[i] != null) Plugin.Log.LogInfo("[UiParts] item icon " + i + " " + ITEM_ICON_FILES[i] + " " + s_itemIcons[i].width + "x" + s_itemIcons[i].height);
+            }
+            return s_itemIcons[i];
+        }
+
+        /// <summary>品物のアイコンを r に収めて描く (縦横比を保つ。無ければ何もしない)。</summary>
+        public static void DrawItemIcon(Rect r, int id)
+        {
+            Texture2D t = ItemIcon(id);
+            if (t == null) return;
+            Color col = GUI.color; GUI.color = Color.white;
+            GUI.DrawTexture(r, t, ScaleMode.ScaleToFit, true);
+            GUI.color = col;
         }
 
         // アーカイブから自前の Texture2D に読む (本体の登録テクスチャとは別の実体。この MOD が持ち続ける)
@@ -144,7 +188,7 @@ namespace RS2QoL
             return DrawPaperWindow(r, false);
         }
 
-        /// <summary>枠の中に壁紙を敷いて描く。gray なら倉庫画面の灰色の石の紙 (どこでも大臣の画面)、そうでなければメニューの羊皮紙。</summary>
+        /// <summary>枠の中に壁紙を敷いて描く。gray なら倉庫画面の灰色の石の紙 (どこでもアバロンの窓)、そうでなければメニューの羊皮紙。</summary>
         public static bool DrawPaperWindow(Rect r, bool gray)
         {
             Load();
@@ -505,6 +549,47 @@ namespace RS2QoL
             float w = gs[0].CalcSize(new GUIContent(text)).x * sc;
             if (style.fontStyle == FontStyle.Bold) w += 1f;
             return w;
+        }
+
+        public const int BUBBLE_TAIL = 6;                                   // 吹き出しの尾の長さ (マス)。店・仲間の窓の吹き出しと同じ
+        private static readonly int[] BUBBLE_CORNER = { 3, 1, 1 };            // 角の欠き (端の行から 1 行ごとに何マス欠くか)
+
+        /// <summary>
+        /// 台詞の吹き出しのドット絵 (RecruitInfo.MakeBubbleTexture と同じ作り: 1 マス = 1 テクセル、生成り (243,243,217) の 3/4 の不透明度、
+        /// 縁の線は無し、角は段で欠く)。尾は tail マスの三角で、tailUp が false なら下辺から下へ (仲間の窓: 絵が下にある)、
+        /// true なら上辺から上へ (どこでも情報室: 絵が上にある)。根元は tailCell の 4 マス右から tail マス、先は根元の左端の列。Point で拡大して貼る。
+        /// </summary>
+        public static Texture2D MakeBubbleTexture(int cellsW, int cellsH, int tail, int tailCell, bool tailUp)
+        {
+            int bodyH = cellsH - tail;
+            if (cellsW <= 0 || bodyH <= BUBBLE_CORNER.Length * 2) return null;
+            Color32 face = new Color32(243, 243, 217, 191);
+            Color32 clear = new Color32(0, 0, 0, 0);
+            Color32[] px = new Color32[cellsW * cellsH];
+            for (int i = 0; i < px.Length; i++) px[i] = clear;
+            int bodyTop = tailUp ? tail : 0;                                   // 地の最初の行 (上から数えて)
+            for (int y = 0; y < bodyH; y++)
+            {
+                int edge = Mathf.Min(y, bodyH - 1 - y);
+                int cut = edge < BUBBLE_CORNER.Length ? BUBBLE_CORNER[edge] : 0;
+                int row = bodyTop + y;
+                for (int x = cut; x < cellsW - cut; x++) px[(cellsH - 1 - row) * cellsW + x] = face;
+            }
+            int baseL = Mathf.Clamp(tailCell + 4, 1, cellsW - tail - 1);
+            for (int k = 0; k < tail; k++)
+            {
+                int row = tailUp ? tail - 1 - k : bodyH + k;                   // k = 0 が根元、k = tail - 1 が先
+                int x1 = baseL + tail - 1 - k;
+                for (int x = baseL; x <= x1 && x < cellsW; x++) px[(cellsH - 1 - row) * cellsW + x] = face;
+            }
+            Texture2D t = new Texture2D(cellsW, cellsH, TextureFormat.ARGB32, false);
+            t.name = "UiBubble";
+            t.hideFlags = HideFlags.HideAndDontSave;
+            t.filterMode = FilterMode.Point;
+            t.wrapMode = TextureWrapMode.Clamp;
+            t.SetPixels32(px);
+            t.Apply();
+            return t;
         }
 
         /// <summary>本体のメニューと同じ効果音 (212 = カーソル移動、213 = 決定、211 = キャンセル)。</summary>

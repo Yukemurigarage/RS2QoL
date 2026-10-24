@@ -261,7 +261,7 @@ namespace RS2QoL.Patches
             s_title.fontStyle = FontStyle.Bold;
             s_title.alignment = TextAnchor.MiddleLeft;
             s_title.wordWrap = false;
-            s_title.normal.textColor = Color.black;                            // どこでも大臣の知らせの見出しと同じ
+            s_title.normal.textColor = Color.black;                            // どこでも金庫番の知らせの見出しと同じ
             s_body = new GUIStyle(s_title);
             s_body.normal.textColor = new Color(0.45f, 0.05f, 0.02f);         // 灰色の紙の上の暗い赤 (同上)
             s_hint = new GUIStyle(s_title);

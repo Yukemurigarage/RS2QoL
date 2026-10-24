@@ -563,7 +563,7 @@ namespace RS2QoL.Patches
             if ((pressed & (BTN_OK | BTN_CANCEL)) != 0 || escEdge) { Close(); return 0; }
             if (s_info != null && s_info.Member)
             {
-                // 仲間の窓: LB / RB で前後の仲間 (物理ボタン。どこでも大臣のページ送りと同じ読み方)
+                // 仲間の窓: LB / RB で前後の仲間 (物理ボタン。どこでもアバロンのページ送りと同じ読み方)
                 bool lb = PageBackDown(), rb = PageNextDown();
                 try
                 {
@@ -1233,7 +1233,7 @@ namespace RS2QoL.Patches
             s_line.normal.textColor = new Color(0.12f, 0.08f, 0.05f);
             if (s_font != null) s_line.font = s_font;
             s_dim = new GUIStyle(s_line);
-            s_dim.normal.textColor = new Color(0.3f, 0.26f, 0.22f);   // 薄い灰色は読みにくい (ユーザー 2026-10-20) ので濃いめ
+            s_dim.normal.textColor = UiParts.DimPaper;   // 薄い灰色は読みにくい (ユーザー 2026-10-20、2026-10-24 にさらに濃く) → 共通の色
             s_hint = new GUIStyle(s_dim);
             s_hint.fontSize = Mathf.Max(10, fontSize - 2);
             s_title = new GUIStyle(s_line);

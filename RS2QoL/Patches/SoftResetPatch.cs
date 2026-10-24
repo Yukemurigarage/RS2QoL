@@ -142,7 +142,7 @@ namespace RS2QoL.Patches
             }
         }
 
-        /// <summary>確認ダイアログを出す。MOD の窓は開く時に決定音、閉じる時にカーソル音 (どこでも大臣・設定画面と同じ。ユーザー要望 2026-10-13)。</summary>
+        /// <summary>確認ダイアログを出す。MOD の窓は開く時に決定音、閉じる時にカーソル音 (どこでもアバロン・設定画面と同じ。ユーザー要望 2026-10-13)。</summary>
         private static void OpenConfirm()
         {
             SetPhase(Phase.Confirm);

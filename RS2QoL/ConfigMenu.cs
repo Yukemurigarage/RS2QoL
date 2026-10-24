@@ -636,7 +636,7 @@ namespace RS2QoL
                 Label = "敵の強さ・味方の成長・宝箱の N 万クラウン・施設の費用は変わらない",
                 Selectable = false,
             });
-            // 所持金: 上限と、どこでも大臣 (国庫 ⇄ 所持金)。設定画面はフィールドのポーズ中かタイトルでしか開かないので、ここでの操作は安全
+            // 所持金: 上限と、どこでも金庫番 (国庫 ⇄ 所持金)。設定画面はフィールドのポーズ中かタイトルでしか開かないので、ここでの操作は安全
             p.Items.Add(new Item
             {
                 Label = "今の所持金",
@@ -697,7 +697,7 @@ namespace RS2QoL
             });
             p.Items.Add(new Item
             {
-                Label = "どこでも大臣の画面を開くボタン (歩ける時・ポーズ中に)",
+                Label = "どこでもアバロンの窓を開くボタン (歩ける時・ポーズ中に)",
                 Value = () => TreasuryScreen.ButtonsText(FieldLRAction.Treasury, FunctionButtonsText(PadFunction.Treasury)),
                 Selectable = false,
             });
@@ -937,8 +937,8 @@ namespace RS2QoL
 
         // ---------------------------------------------------------------- 開閉と入力
 
-        // F1 で開く時のフィールドの自動ポーズ (どこでも大臣と同じ手順: Start を 2 フレーム流してポーズを待ってから開く)。
-        // 閉じてもポーズは残す (どこでも大臣と同じ。ユーザー要望 2026-10-13。解除は Start かキャンセルで、その時に本体のポーズの解除の音が鳴る)
+        // F1 で開く時のフィールドの自動ポーズ (どこでもアバロンと同じ手順: Start を 2 フレーム流してポーズを待ってから開く)。
+        // 閉じてもポーズは残す (どこでもアバロンと同じ。ユーザー要望 2026-10-13。解除は Start かキャンセルで、その時に本体のポーズの解除の音が鳴る)
         private enum F1Phase { None, PauseFirst }
         private static F1Phase s_f1Phase;
         private static int s_f1Frames, s_f1Injected;
@@ -982,7 +982,7 @@ namespace RS2QoL
             return s_f1Injected <= INJECT_FRAMES ? KEY_PAUSE : 0;
         }
 
-        /// <summary>開く (決定音)。MOD の窓は開く時に決定音、閉じる時にカーソル音で揃える (どこでも大臣・ソフトリセットも同じ。ユーザー要望 2026-10-13)。</summary>
+        /// <summary>開く (決定音)。MOD の窓は開く時に決定音、閉じる時にカーソル音で揃える (どこでもアバロン・ソフトリセットも同じ。ユーザー要望 2026-10-13)。</summary>
         public static void Open()
         {
             if (IsOpen) return;
@@ -1003,7 +1003,7 @@ namespace RS2QoL
             Close();
         }
 
-        /// <summary>閉じる。F1 でこちらがポーズをかけていても解除しない (どこでも大臣と同じ。Start かキャンセルで解除する)。</summary>
+        /// <summary>閉じる。F1 でこちらがポーズをかけていても解除しない (どこでもアバロンと同じ。Start かキャンセルで解除する)。</summary>
         public static void Close()
         {
             if (!IsOpen) return;
@@ -1042,7 +1042,7 @@ namespace RS2QoL
             Wallet.HandleButton();
             TreasuryScreen.HandleButton();
             TitleSkip.HandleDemo(key); // タイトル放置後の自動デモの戦闘中など: A/B/X/Y/Start で強制的にタイトルへ
-            // 本体のポーズの開始 / 解除に効果音 (本体は無音)。MOD の画面が自分でポーズをかける流れ (どこでも大臣・終了・ソフトリセット・F1 の設定画面) では
+            // 本体のポーズの開始 / 解除に効果音 (本体は無音)。MOD の画面が自分でポーズをかける流れ (どこでもアバロン・終了・ソフトリセット・F1 の設定画面) では
             // 鳴らさず、その画面の開閉の音 (開く = 決定音、閉じる = カーソル音) だけにする
             FieldPause.TrackSound(TreasuryScreen.Active || QuitGame.Active || SoftReset.Active || F1PauseBusy);
 
@@ -1705,7 +1705,7 @@ namespace RS2QoL
             {
                 s_line.normal.textColor = new Color(0.08f, 0.06f, 0.04f);
                 s_lineSel.normal.textColor = new Color(0f, 0f, 0f);
-                s_lineDim.normal.textColor = new Color(0.3f, 0.26f, 0.22f);   // 薄い灰色は読みにくい (ユーザー 2026-10-20) ので濃いめ
+                s_lineDim.normal.textColor = UiParts.DimPaper;   // 薄い灰色は読みにくい (ユーザー 2026-10-20、2026-10-24 にさらに濃く) → 共通の色
                 s_section.normal.textColor = s_lineSel.normal.textColor;
                 s_title.normal.textColor = s_lineSel.normal.textColor;
                 s_footer.normal.textColor = new Color(0.2f, 0.16f, 0.13f);

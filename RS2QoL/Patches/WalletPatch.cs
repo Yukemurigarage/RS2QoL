@@ -12,16 +12,16 @@ namespace RS2QoL.Patches
     ///   N 万クラウンの宝箱 Core.takara_gold_ivent と追憶の迷宮の同種 (Core.appnew_ivent)) にそれぞれ 10000 のリテラルで埋め込まれている。
     ///   セーブでは 2 バイト (Menu.save_adr_table2 の (2, 2, 25))、スクリプトの書き込み (kou2save_work → partydata_chktbl) も 16 bit なので、
     ///   上限は 65,535 までしか上げられない (それ以上はセーブで下位 16 bit だけ残り、壊れたように見える)。表示は 5 桁 (Menu.make_money_font) で足りる。
-    /// - 国庫 = Work.partydata[418] (上限 16,777,215)。所持金を補充する唯一の手段は玉座の間の大臣 (msg 88: 国庫 ≥ 99,840 かつ所持金 &lt; 1 万のとき、
+    /// - 国庫 = Work.partydata[418] (上限 16,777,215)。所持金を補充する唯一の手段は玉座の間の金庫番 (msg 88: 国庫 ≥ 99,840 かつ所持金 &lt; 1 万のとき、
     ///   所持金 = 1 万・国庫 −1 万の一律)。遠征中に金が切れるとアバロンまで戻る必要があり、これがスマホ移植でも SFC でも面倒の元。
     ///
     /// MOD:
     ///    N 万クラウンの宝箱 (本体: 国庫に N 万、所持金 = 1 万) は所持金を上限まで満たし、1 万を超えて満たした分は国庫行きから差し引く (総額は本体と同じ)。
     ///    その時のメッセージの金額も実際に動かした額に差し替える (Wallet_ten_put_Patch)。
-    /// 2. どこでも大臣: 国庫 → 所持金 (上限まで。国庫には [Economy] TreasuryFloor の額を残す) と、所持金 → 国庫 (全額)。
+    /// 2. どこでも金庫番: 国庫 → 所持金 (上限まで。国庫には [Economy] TreasuryFloor の額を残す) と、所持金 → 国庫 (全額)。
     ///    設定画面「国庫」ページの項目と、ボタン割り当ての「国庫から引き出す」(フィールドで歩ける時かポーズ中だけ) から。
     ///    スクリプトの msg 88 を遠隔で走らせるのではなく C# で直接動かす (msg 88 は最終決戦前の分岐 (msg 1253) などの早期終了を持つため)。
-    ///    城の大臣は本体どおり (1 万まで) 残る。
+    ///    城の金庫番は本体どおり (1 万まで) 残る。
     /// </summary>
     internal static class Wallet
     {
@@ -41,11 +41,11 @@ namespace RS2QoL.Patches
         {
             Max = config.Bind("Economy", "WalletMax", HARD_MAX,
                 new ConfigDescription("所持金 (財布) の上限。本体は 10000。宝箱・店の売却で入る金はここまで持てる。セーブの形式上 65535 が最大。"
-                    + "城の大臣の資金補充は本体どおり 1 万まで (遠隔の引き出しは上限まで入る)",
+                    + "城の金庫番の資金補充は本体どおり 1 万まで (遠隔の引き出しは上限まで入る)",
                     new AcceptableValueRange<int>(VANILLA_MAX, HARD_MAX)));
             TreasuryFloor = config.Bind("Economy", "TreasuryFloor", 100000,
                 new ConfigDescription("国庫から所持金へ引き出す時に、国庫に残しておく額 (施設の費用 30 万〜100 万を取り崩さないため)。"
-                    + "0 なら全部引き出せる。本体の大臣は国庫が 99,840 未満だと補充しないので、既定はそれに近い 100,000",
+                    + "0 なら全部引き出せる。本体の金庫番は国庫が 99,840 未満だと補充しないので、既定はそれに近い 100,000",
                     new AcceptableValueRange<int>(0, FLOOR_MAX)));
         }
 
@@ -74,7 +74,7 @@ namespace RS2QoL.Patches
             Work.partydata[WALLET] = (int)v;
         }
 
-        // ---------------------------------------------------------------- どこでも大臣
+        // ---------------------------------------------------------------- どこでも金庫番
 
         /// <summary>ゲーム本編に入っていてセーブデータが載っているか (タイトルでは partydata が空)。</summary>
         public static bool InGame()
@@ -214,7 +214,7 @@ namespace RS2QoL.Patches
 
         public static void ShowNotice(string text) { ShowNotice(text, TITLE, true, NOTICE_SECONDS); }
 
-        /// <summary>見出しと大臣の絵の有無を指定して出す (弔いの鍛冶など、どこでも大臣以外の知らせ用)。</summary>
+        /// <summary>見出しと大臣の絵の有無を指定して出す (弔いの鍛冶など、どこでも金庫番以外の知らせ用)。</summary>
         public static void ShowNotice(string text, string title, bool withMinister, float seconds)
         {
             s_notice = text;
@@ -228,10 +228,10 @@ namespace RS2QoL.Patches
         private static GUIStyle s_stylePaper;
         private static GUIStyle s_styleTitle;
         private static GUIStyle s_styleTitlePaper;
-        private const string TITLE = "どこでも大臣";
+        private const string TITLE = "どこでも金庫番";
 
         /// <summary>
-        /// 画面上部中央に結果を数秒出す (Plugin.OnGUI から)。どこでも大臣の窓と同じ灰色の紙の小窓に、大臣の絵 (歩きアニメ) を添える
+        /// 画面上部中央に結果を数秒出す (Plugin.OnGUI から)。どこでもアバロンの窓と同じ灰色の紙の小窓に、大臣の絵 (歩きアニメ) を添える
         /// (窓を開かずに引き出した時も大臣が出てくるように)。部品が無ければ暗い箱に黄色の文字。
         /// </summary>
         public static void DrawNotice()
@@ -253,9 +253,9 @@ namespace RS2QoL.Patches
                 s_styleTitle = new GUIStyle(s_style);
                 s_styleTitle.normal.textColor = Color.white;
                 s_styleTitlePaper = new GUIStyle(s_style);
-                s_styleTitlePaper.normal.textColor = Color.black;                  // どこでも大臣の窓の見出しと同じ黒
+                s_styleTitlePaper.normal.textColor = Color.black;                  // どこでもアバロンの窓の見出しと同じ黒
             }
-            // 大臣の絵 (どこでも大臣の窓と同じ大きさ = TreasuryScreen.MinisterDot 倍) + 文字 2 行 (見出し「どこでも大臣」と結果。
+            // 大臣の絵 (どこでもアバロンの窓と同じ大きさ = TreasuryScreen.MinisterDot 倍) + 文字 2 行 (見出し「どこでも金庫番」と結果。
             // 文字は小さいまま、2 行まとめて絵の中央の高さに)。幅は文字の実測、画面に入らなければ切る
             bool minister = s_noticeMinister && TreasuryScreen.HasMinister;
             string title = s_noticeTitle;

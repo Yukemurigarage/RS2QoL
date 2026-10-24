@@ -95,7 +95,7 @@ namespace RS2QoL
             Patches.ShopEquipCompare.Bind(Config);
             // 店で E が付く仲間の絵を、戦闘でコマンドを決めた時と同じ「回って構える」動きに (武器は攻撃の構え、防具・道具は選択中の構え) ([Menu] ShopEquipSpin、既定 true)
             Patches.ShopEquipSpin.Bind(Config);
-            // ステータス画面の素早さを防具の重さ (÷2) を引いた戦闘の値にする ([Menu] StatusAgilityAfterWeight、既定 true)。どこでも大臣の 2 ページ目 (体重計) も同じ計算
+            // ステータス画面の素早さを防具の重さ (÷2) を引いた戦闘の値にする ([Menu] StatusAgilityAfterWeight、既定 true)。どこでもアバロンの 2 ページ目 (体重計) も同じ計算
             Patches.PartyWeight.Bind(Config);
             // 戦闘の L / R をスーファミ版と同じ「退却 / 防御の呼び出し」にする ([Battle] SfcLR、既定 true)
             Patches.BattleLR.Bind(Config);
@@ -150,9 +150,9 @@ namespace RS2QoL
             Patches.BattleReview.Bind(Config);
             // 戦闘のたびに国庫に入る税収の倍率 ([Economy] TaxPercent、既定 100% = 本体どおり)
             Patches.TaxIncome.Bind(Config);
-            // 所持金の上限 ([Economy] WalletMax、既定 65535) と、どこでも大臣 (国庫 ⇄ 所持金、[Economy] TreasuryFloor、ボタン割り当て Withdraw)
+            // 所持金の上限 ([Economy] WalletMax、既定 65535) と、どこでも金庫番 (国庫 ⇄ 所持金、[Economy] TreasuryFloor、ボタン割り当て Withdraw)
             Patches.Wallet.Bind(Config);
-            // どこでも大臣の画面と、フィールドの LB / RB の役目 ([Economy] FieldLB / FieldRB、既定 LB = 画面、RB = 引き出す)
+            // どこでもアバロンの窓と、フィールドの LB / RB の役目 ([Economy] FieldLB / FieldRB、既定 LB = 画面、RB = 引き出す)
             Patches.TreasuryScreen.Bind(Config);
             // 弔いの鍛冶: 皇帝が死んで継承すると 1 回たまり、開発所で国庫を使わずに開発できる ([MourningForge] Enabled、既定 Off = 本体どおり)
             Patches.MourningForge.Bind(Config);

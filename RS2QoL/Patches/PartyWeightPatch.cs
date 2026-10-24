@@ -16,7 +16,7 @@ namespace RS2QoL.Patches
     ///   - メニューのステータス画面 (Menu.StatusDisply) は memberdata[132] + 10 を大きく、memberdata[101] との差を「+N」で出すだけで、
     ///     重さは引かない (スーファミ版からそう。スマホ版の上書きではない)。
     ///
-    /// ここでは (1) どこでも大臣の 2 ページ目 (どこでも体重計) 用の数字と名前と絵、(2) ステータス画面の素早さを重さを引いた値にする
+    /// ここでは (1) どこでもアバロンの 2 ページ目 (どこでも体重計) 用の数字と名前と絵、(2) ステータス画面の素早さを重さを引いた値にする
     /// Postfix ([Menu] StatusAgilityAfterWeight、既定 true) を持つ。
     /// </summary>
     internal static class PartyWeight

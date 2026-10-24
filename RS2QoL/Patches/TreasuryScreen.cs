@@ -8,18 +8,23 @@ namespace RS2QoL.Patches
     public enum FieldLRAction
     {
         None,       // 何もしない (本体どおり。フィールドでは LB / RB に役目が無い)
-        Treasury,   // どこでも大臣の画面を開く
+        Treasury,   // どこでもアバロンの窓を開く
         Withdraw,   // 国庫から所持金へ引き出す (画面を開かずに即時)
     }
 
     /// <summary>
-    /// どこでも大臣の画面 (PadFunction.Treasury。既定はフィールドの LB。[Economy] FieldLB / FieldRB 参照)。
+    /// どこでもアバロンの窓 (PadFunction.Treasury。既定はフィールドの LB。[Economy] FieldLB / FieldRB 参照)。
     ///
     /// 本体の倉庫画面の壁紙 (灰色の石の紙、menu/wallpaper/wallpaper_05.png) を敷いた専用の窓に、大臣の絵と、今の国庫・所持金、
     /// 国庫に残す額の変更・国庫から引き出す・国庫に預ける・とじる を置く (中身は設定画面「国庫」ページと同じ Wallet の処理)。
     /// 設定画面と同じ部品 (CBattleWindow の枠、手のカーソル、とじる ボタン、OS の日本語フォント) で描く。
     ///
     /// 大臣の絵は本体のフィールド NPC の絵そのもの: アバロン城 (map 24) の玉座の間 (7,13) の大臣 (msg 88) は maptbl.bin で絵の番号 115。
+    /// (名前: Steam 公式マニュアルの「帝都アバロン施設ガイド」はこの施設を「金庫」、人を「金庫番」と呼ぶので、窓の名前は
+    ///  v0.53.0 から「どこでも金庫番」。コードの識別子 Treasury / Minister と cfg のキーはそのまま。コメントの「大臣」= 金庫番。
+    ///  窓全体 (5 ページ) の名前は「どこでもアバロン」(ユーザー決定 2026-10-24。方針「アバロンの施設に行かないとできないことを無くす」)。
+    ///  ページ名: 1 どこでもアバロン (報告書 = 情報官の吹き出し + 数字。TreasuryReportPage.cs) / 2 どこでも金庫番 / 3 どこでも倉庫 (引き出す) /
+    ///  4 どこでも倉庫 (預ける) (TreasuryStoragePage.cs) / 5 どこでも体重計 / 6 どこでも理力計。開いた時は 1 ページ目。LB / RB は端で折り返す)
     /// 本体と同じ手順 (ImageEfx.init(4, 115) → Data.setObjPalette → storeImage) で 104x26 のシート (正面 / 背面 / 横 / 横の歩き、
     /// Core.people_chara_tbl と同じ並び) を組み、正面の 26x26 を Texture2D に写す。歩きアニメは本体と同じく正面コマと
     /// その左右反転を交互に出す (people_chara_tbl[4] = 正面を反転。足の出方が入れ替わる)。
@@ -33,10 +38,10 @@ namespace RS2QoL.Patches
     /// 閉じてもポーズは残す (ユーザーの要望。Start で解除する)。開いている間はゲームに入力を渡さない (ConfigMenu.Tick が Tick に回す)。
     /// 閉じるのは とじる・キャンセル・Esc (開いたボタンの押し直しでは閉じない: LB / RB はページ送り)。
     ///
-    /// ページ: 1 = どこでも大臣 (国庫)、2 = どこでも体重計 (仲間ごとの絵・名前・防具の重さ・素早さ → 戦闘での素早さ。PartyWeight 参照)。
+    /// ページ: 1 = どこでも金庫番 (国庫)、2 = どこでも体重計 (仲間ごとの絵・名前・防具の重さ・素早さ → 戦闘での素早さ。PartyWeight 参照)。
     /// 開いている間の LB / RB (物理ボタン。割り当ては見ない) で送る。
     /// </summary>
-    internal static class TreasuryScreen
+    internal static partial class TreasuryScreen   // 倉庫・情報室のページは TreasuryStoragePage.cs / TreasuryInfoPage.cs
     {
         public static ConfigEntry<FieldLRAction> FieldLB, FieldRB;
 
@@ -51,9 +56,9 @@ namespace RS2QoL.Patches
         // 行 (カーソルが乗るのは ROW_FLOOR 以降。ROW_CLOSE は右下の とじる ボタン)
         private const int ROW_TREASURY = 0, ROW_MONEY = 1, ROW_FLOOR = 2, ROW_WITHDRAW = 3, ROW_DEPOSIT = 4, ROW_CLOSE = 5;
         private const int ROWS = 5;               // 枠の中に描く行数 (とじる は除く)
-        private const int PAGE_TREASURY = 0, PAGE_WEIGHT = 1, PAGE_CHARM = 2, PAGES = 3;
+        private const int PAGE_REPORT = 0, PAGE_TREASURY = 1, PAGE_STORAGE = 2, PAGE_DEPOSIT = 3, PAGE_WEIGHT = 4, PAGE_CHARM = 5, PAGES = 6;
         private const float WEIGHT_ROW = 1.5f;    // 体重計・理力計のページの 1 人分の最低の高さ (行の高さの倍数。実際は WeightRowH = 兵士と同じ大きさの絵が入る高さ)
-        private static readonly string[] PAGE_TITLES = { "どこでも大臣", "どこでも体重計", "どこでも理力計" };
+        private static readonly string[] PAGE_TITLES = { "どこでもアバロン", "どこでも金庫番", "どこでも倉庫 (引き出す)", "どこでも倉庫 (預ける)", "どこでも体重計", "どこでも理力計" };
         private static int s_page = PAGE_TREASURY;
         private static int s_cursorTreasury = ROW_WITHDRAW;   // 体重計のページから戻った時に戻すカーソル
         private static bool s_prevLB, s_prevRB;   // 開いている間のページ送り (物理 LB / RB の押下エッジ)
@@ -77,7 +82,7 @@ namespace RS2QoL.Patches
         public static void Bind(ConfigFile config)
         {
             FieldLB = config.Bind("Economy", "FieldLB", FieldLRAction.Treasury,
-                "フィールドで歩ける時とポーズ中に LB を押した時の役目 (フィールドでは本体は LB / RB を使わない)。None = 何もしない / Treasury = どこでも大臣の画面を開く / Withdraw = 国庫から所持金へ引き出す (画面を開かずに即時)。メニュー・戦闘では本体どおり");
+                "フィールドで歩ける時とポーズ中に LB を押した時の役目 (フィールドでは本体は LB / RB を使わない)。None = 何もしない / Treasury = どこでもアバロンの窓を開く / Withdraw = 国庫から所持金へ引き出す (画面を開かずに即時)。メニュー・戦闘では本体どおり");
             FieldRB = config.Bind("Economy", "FieldRB", FieldLRAction.Withdraw,
                 "フィールドで歩ける時とポーズ中に RB を押した時の役目。None / Treasury / Withdraw (FieldLB と同じ)");
         }
@@ -129,7 +134,7 @@ namespace RS2QoL.Patches
         {
             switch (a)
             {
-                case FieldLRAction.Treasury: return "どこでも大臣の画面";
+                case FieldLRAction.Treasury: return "どこでもアバロンの窓";
                 case FieldLRAction.Withdraw: return "国庫から引き出す";
                 default: return "なし";
             }
@@ -185,7 +190,7 @@ namespace RS2QoL.Patches
             // ここに来るのはボタン割り当ての機能だけ (フィールドの LB / RB は歩ける時とポーズ中しか数えない)
             Plugin.Log.LogInfo("[Economy] treasury screen button ignored (not on the field) " + FieldPause.StateText());
             UiParts.SeCancel();
-            Wallet.ShowNotice("どこでも大臣はフィールドで (ポーズ中でも可)");
+            Wallet.ShowNotice("どこでもアバロンはフィールドで (ポーズ中でも可)");
         }
 
         /// <summary>フィールドの LB / RB のうち、役目 action のものが (場面を問わず) 押されているか。開いている間の閉じる判定用。</summary>
@@ -201,9 +206,10 @@ namespace RS2QoL.Patches
             s_status = "";
             s_heldDir = 0;
             s_prevKey = -1;                       // 開いたフレームの押しっぱなしをエッジに見せない
-            s_cursor = ROW_WITHDRAW;
+            s_cursor = ROW_CLOSE;                 // 1 ページ目 (報告書) は読むだけ: 決定 = とじる
             s_cursorTreasury = ROW_WITHDRAW;
-            s_page = PAGE_TREASURY;
+            s_page = PAGE_REPORT;
+            ReportRefresh();
             s_prevLB = PageBackDown();   // 開いた LB の押しっぱなしをページ送りに見せない
             s_prevRB = PageNextDown();
             s_animStart = Time.realtimeSinceStartup;
@@ -277,7 +283,11 @@ namespace RS2QoL.Patches
             else if (dir != s_heldDir) { s_heldDir = dir; s_nextRepeat = now + REPEAT_FIRST; HandleDir(dir); }
             else if (now >= s_nextRepeat) { s_nextRepeat = now + REPEAT_NEXT; HandleDir(dir); }
 
-            if ((pressed & BTN_OK) != 0) Activate(s_cursor);
+            if ((pressed & BTN_OK) != 0)
+            {
+                if (IsStoragePage) StorageActivate();   // 倉庫のページは決定 = 品物を 1 個動かす (閉じるのはキャンセル・とじる)
+                else Activate(s_cursor);
+            }
         }
 
         /// <summary>ページを戻す入力 (物理 LB か、キーボードの L 機能のキー)。</summary>
@@ -287,6 +297,8 @@ namespace RS2QoL.Patches
 
         private static void HandleDir(int dir)
         {
+            if (IsStoragePage) { StorageDir(dir); return; }
+            if (s_page == PAGE_REPORT) { ReportDir(dir); return; }
             if ((dir & DIR_UP) != 0) MoveCursor(-1);
             else if ((dir & DIR_DOWN) != 0) MoveCursor(+1);
             else if (s_cursor == ROW_FLOOR && (dir & (DIR_LEFT | DIR_RIGHT)) != 0)
@@ -308,12 +320,14 @@ namespace RS2QoL.Patches
         /// <summary>ページを delta だけ送る (端で止まる。LB / RB と、見出しの矢印のクリック)。</summary>
         private static void TurnPage(int delta)
         {
-            int p = Mathf.Clamp(s_page + delta, 0, PAGES - 1);
+            int p = ((s_page + delta) % PAGES + PAGES) % PAGES;   // 端で折り返す (設定画面と同じ。ユーザー要望 2026-10-24)
             if (p == s_page) return;
             if (s_page == PAGE_TREASURY) s_cursorTreasury = s_cursor;
             s_page = p;
-            s_cursor = p == PAGE_TREASURY ? s_cursorTreasury : ROW_CLOSE;
+            s_cursor = p == PAGE_TREASURY ? s_cursorTreasury : (IsStoragePage ? -1 : ROW_CLOSE);   // 倉庫は手のカーソルが品物に付く (とじる には付けない)
             s_status = "";
+            if (IsStoragePage) { s_stCursor = 0; s_stTop = 0; StorageRefresh(); }
+            else if (p == PAGE_REPORT) ReportRefresh();
             UiParts.SeCursor();
             Plugin.Log.LogInfo("[Economy] treasury screen page " + (p + 1) + " (" + PAGE_TITLES[p] + ")");
         }
@@ -387,7 +401,7 @@ namespace RS2QoL.Patches
         public const int MinisterDots = FRAME;
 
         /// <summary>
-        /// 大臣の絵の 1 ドットを何画面 px にするか (整数倍)。どこでも大臣の窓の見出し (行の高さ 2.4 行分) に収まる大きさで、
+        /// 大臣の絵の 1 ドットを何画面 px にするか (整数倍)。どこでもアバロンの窓の見出し (行の高さ 2.4 行分) に収まる大きさで、
         /// 画面上部の結果の小窓でも同じ大きさにする (1600x900 で 3 倍 = 78 px)。
         /// </summary>
         public static int MinisterDot
@@ -426,13 +440,14 @@ namespace RS2QoL.Patches
             // 幅は結果の文 (「国庫から 55,535 引き出した (財布 65,535、国庫 488,465)」≈ 35 文字) が 1 行に入る広さ。それでも入らなければ文字を小さくする
             float w = Mathf.Min(Screen.width - 2 * outer, fontSize * 40f);
             // 見出し (大臣の絵 2.4 行 + 0.2 行) + 項目 (国庫: ROWS 行 / 体重計: 列の見出し 1 行 + 人数 × WEIGHT_ROW 行) + 0.3 行
-            //   + 結果の文 1 行 + ボタンの段 1.5 行 + 0.2 行 + 操作説明 1 行。高さはページごと (体重計の方が高い)
+            //   + 結果の文 2 行 + ボタンの段 1.5 行 + 0.2 行 + 操作説明 1 行。高さはページごと (体重計の方が高い)
             float headH = Mathf.Round(lineH * 2.4f);
             // 高さはページで変えない (切り替えのたびに窓が上下しないように、高い方 = 体重計に合わせる)
             int members = PartyWeight.Count();
             // 体重計の 1 人分は仲間の絵 (見出しの兵士と同じ大きさ) が入る高さ。1600x900 で 82 px × 5 人 + 見出し → 窓は約 770 px (画面の 85%)
-            float bodyH = Mathf.Max(ROWS * lineH, lineH + members * WeightRowH(lineH));
-            float h = pad * 2 + headH + lineH * (0.2f + 0.3f + 1f + 1.5f + 0.2f + 1f) + bodyH;
+            // 最低 12 行 (報告書のページで数字 4 行 + 情報官の吹き出しが入るように。1600x900 で窓は画面の 9 割)
+            float bodyH = Mathf.Max(Mathf.Max(ROWS, 12) * lineH, lineH + members * WeightRowH(lineH));
+            float h = pad * 2 + headH + lineH * (0.2f + 0.3f + NOTE_LINES + 1.5f + 0.2f + 1f) + bodyH;
             float x = Mathf.Round((Screen.width - w) / 2f);
             float y = Mathf.Round((Screen.height - h) / 2f);
             Rect win = new Rect(x, y, w, h);
@@ -447,7 +462,8 @@ namespace RS2QoL.Patches
             int dot = MinisterDot;
             float spr = dot * FRAME;
             Rect sprR = new Rect(cx, cy + headH - spr - 10f, spr, spr);    // 足元を見出しの下端に合わせる (10 px だけ上に: 下端に付くと窮屈に見える)
-            if (s_page != PAGE_TREASURY) DrawGuard(sprR); else DrawMinister(sprR);   // 体重計・理力計は倉庫の前の兵士 (理力計の NPC の絵は未確認なので兵士で代用)
+            // 報告書と金庫番は大臣の絵 (情報官 2 人も本体の絵は同じ obj 115)、体重計・理力計・倉庫は倉庫の前の兵士
+            if (s_page == PAGE_REPORT || s_page == PAGE_TREASURY) DrawMinister(sprR); else DrawGuard(sprR);   // 体重計・理力計は倉庫の前の兵士 (理力計の NPC の絵は未確認なので兵士で代用)
             float titleX = s_minister != null ? cx + spr + fontSize * 0.5f : cx;
             UiParts.Label(new Rect(titleX, cy, cw - (titleX - cx), headH), PAGE_TITLES[s_page], s_title);
             // 見出しの右端にページ: [L] 1 / 2 [R] (設定画面と同じ本体の L / R ボタンの絵。クリックでも送れる)
@@ -481,6 +497,14 @@ namespace RS2QoL.Patches
             {
                 cy = DrawCharmPage(cx, cy, cw, lineH, fontSize, members);
             }
+            else if (IsStoragePage)
+            {
+                cy = DrawStoragePage(cx, cy, cw, lineH, fontSize, bodyH);
+            }
+            else if (s_page == PAGE_REPORT)
+            {
+                cy = DrawReportPage(cx, cy, cw, lineH, fontSize, bodyH);
+            }
             else
             for (int i = 0; i < ROWS; i++)
             {
@@ -507,12 +531,15 @@ namespace RS2QoL.Patches
             if (s_page == PAGE_TREASURY) cy += bodyH - ROWS * lineH;   // 体重計・理力計のページと同じ位置に結果の文を置く
             cy += lineH * 0.3f;
 
-            // 結果の文 (引き出した / 預けた / できない理由) は幅いっぱいの 1 行。入らなければ文字を小さくする (折り返して切れないように)
+            // 結果の文 (引き出した / 預けた / できない理由) と 体重計・理力計の説明は幅いっぱいの 2 行に折り返す (上揃え)。
+            // 2 行にも入らない時だけ文字を小さくする (以前は 1 行に押し込んで文字が読めないほど小さくなった。ユーザー 2026-10-24)
             string note = s_page == PAGE_WEIGHT ? "戦闘では防具の重さ ÷ 2 (切り捨て) を素早さから引く (武器の重さは効かない)。ステータス画面の小さい数字 (+N / －N) がその増減"
                 : s_page == PAGE_CHARM ? "攻撃術の威力 = 魔力 + (魔力 − 理力) × 2 (理力が魔力以上なら魔力のまま)。ヘルファイア等の冥術とペインは逆に理力で強くなる"
+                : s_page == PAGE_REPORT ? ""   // 報告書のページは下の赤い説明を出さない (ユーザー 2026-10-24: 要らない)
                 : s_status;
-            if (note.Length > 0) UiParts.Label(new Rect(cx, cy, cw, lineH), note, FitStyle(s_status_style, note, cw, ref s_statusFit, ref s_statusFitKey));
-            cy += lineH;
+            float noteH = NOTE_LINES * lineH;
+            if (note.Length > 0) UiParts.Label(new Rect(cx, cy, cw, noteH), note, FitStyleWrap(s_status_style, note, cw, noteH, ref s_statusFit, ref s_statusFitKey));
+            cy += noteH;
 
             // 下部: ボタンの段 (右に とじる) と、枠の一番下の操作説明 (こちらも幅に収まる大きさで 1 行)
             float btnH = Mathf.Round(lineH * 1.5f);
@@ -525,7 +552,12 @@ namespace RS2QoL.Patches
             if (!UiParts.DrawCloseButton(btnR)) UiParts.Label(btnR, "[ とじる ]", s_center);
             if (closeSel) DrawHand(btnR.x, btnR.y + btnR.height / 2f, lineH);
             if (UiParts.ClickArea(btnR)) Close();
-            string foot = s_page != PAGE_TREASURY
+            if (IsStoragePage && StorageDeposit) DrawStorageSortRow(cx, curW, textX, btnR, lineH, fontSize);   // 預けるページ: とじる の左に並べ替え
+            string foot = IsStoragePage
+                ? "上下: 品物  決定: 1 個動かす  LB / RB: ページ (引き出す ⇄ 預ける)  キャンセル・Esc・とじる: 閉じる (ポーズは残る)"
+                : s_page == PAGE_REPORT
+                ? "上下: 情報官の続き  LB / RB: ページ  決定・キャンセル・Esc: 閉じる (ポーズは残る)"
+                : s_page != PAGE_TREASURY
                 ? "LB / RB: ページ  決定・キャンセル・Esc: 閉じる (ポーズは残る)"
                 : "十字キー: 移動  左右: 変更  決定: 実行  LB / RB: ページ  キャンセル・Esc・とじる: 閉じる (ポーズは残る)";
             UiParts.Label(new Rect(cx, footY, cw, footH), foot, FitStyle(s_footer, foot, cw, ref s_footerFit, ref s_footerFitKey));
@@ -628,6 +660,31 @@ namespace RS2QoL.Patches
 
         private static GUIStyle s_statusFit, s_footerFit;
         private static string s_statusFitKey, s_footerFitKey;
+        /// <summary>結果の文 / 体重計・理力計の説明に使う行数 (窓の高さにも入っている)。</summary>
+        private const int NOTE_LINES = 2;
+
+        /// <summary>
+        /// 文字列 text を幅 width で折り返して高さ height に収まる大きさまで文字を小さくしたスタイル (上揃え、下限 10)。
+        /// FitStyle の複数行版。文字列・幅・元の大きさが変わった時だけ作り直す。
+        /// </summary>
+        private static GUIStyle FitStyleWrap(GUIStyle baseStyle, string text, float width, float height, ref GUIStyle cache, ref string cacheKey)
+        {
+            string key = text + "|" + Mathf.RoundToInt(width) + "x" + Mathf.RoundToInt(height) + "|" + baseStyle.fontSize;
+            if (cache != null && cacheKey == key) return cache;
+            cacheKey = key;
+            GUIStyle st = new GUIStyle(baseStyle);
+            st.wordWrap = true;
+            st.alignment = TextAnchor.UpperLeft;
+            st.clipping = TextClipping.Overflow;
+            GUIContent gc = new GUIContent(text);
+            for (int size = baseStyle.fontSize; size >= 10; size--)
+            {
+                st.fontSize = size;
+                if (st.CalcHeight(gc, width) <= height) break;
+            }
+            cache = st;
+            return st;
+        }
 
         /// <summary>
         /// 文字列 text が幅 width に 1 行で収まる大きさまで文字を小さくしたスタイル (下限 10)。文字列・幅・元の大きさが変わった時だけ作り直す。
@@ -680,7 +737,7 @@ namespace RS2QoL.Patches
             s_lineSel = new GUIStyle(s_line);
             s_lineSel.normal.textColor = Color.black;
             s_lineDim = new GUIStyle(s_line);
-            s_lineDim.normal.textColor = new Color(0.26f, 0.24f, 0.23f);   // 薄い灰色は読みにくい (ユーザー 2026-10-20) ので濃いめ
+            s_lineDim.normal.textColor = UiParts.DimPaper;   // 薄い灰色は読みにくい (ユーザー 2026-10-20、2026-10-24 にさらに濃く) → 共通の色
             s_lineRed = new GUIStyle(s_line);
             s_lineRed.normal.textColor = new Color(0.6f, 0.04f, 0.02f);
             s_title = new GUIStyle(s_line);

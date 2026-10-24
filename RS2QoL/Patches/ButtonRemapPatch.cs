@@ -23,8 +23,8 @@ namespace RS2QoL.Patches
         Dash,       // ダッシュ (フィールド) / とじる (メニュー・戦闘。ビット 0x200000 = 本体の Y)。フィールドでは FieldButtonsPatch がメニューを開かせずダッシュにする
         MapMove,    // SFC 版の「マップ移動」(建物から出る / 町からワールドマップへ) / 情報・切替。ビット 0x20 = 本体の X と同じ (Info と同じ働き)
         Quit,       // ゲームを終了 (本体の Esc と同じ終了ダイアログを開く。ゲームには渡らない。QuitGamePatch)
-        Withdraw,   // 国庫から所持金へ引き出す (どこでも大臣。フィールドで歩ける時とポーズ中だけ。ゲームには渡らない。WalletPatch)
-        Treasury,   // どこでも大臣の画面: フィールドで自動ポーズして専用の窓 (国庫 ⇄ 所持金) を開く (ゲームには渡らない。TreasuryScreen)
+        Withdraw,   // 国庫から所持金へ引き出す (どこでも金庫番。フィールドで歩ける時とポーズ中だけ。ゲームには渡らない。WalletPatch)
+        Treasury,   // どこでもアバロンの窓: フィールドで自動ポーズして専用の窓 (国庫 ⇄ 所持金) を開く (ゲームには渡らない。TreasuryScreen)
     }
 
     /// <summary>
@@ -43,8 +43,8 @@ namespace RS2QoL.Patches
         public const int UNITY_BUTTONS = 8;
         /// <summary>
         /// LB / RB の添字と、その同時押し (仮想の 13 個目、v0.28.0)。フィールドでは LB / RB に本体の役目が無いので、
-        /// 同時押しをそのまま「どこでも大臣」に使える (両方のビットはゲームにも渡るが、フィールドでは何も起きない。
-        /// メニュー・戦闘では本体のページ送り / 退却・防御がそのまま効き、どこでも大臣は開かない)。
+        /// 同時押しをそのまま「どこでもアバロン」に使える (両方のビットはゲームにも渡るが、フィールドでは何も起きない。
+        /// メニュー・戦闘では本体のページ送り / 退却・防御がそのまま効き、どこでもアバロンは開かない)。
         /// </summary>
         public const int PHYS_LB = 4, PHYS_RB = 5, CHORD = 12;
         public static readonly string[] PhysicalNames = { "Button0", "Button1", "Button2", "Button3", "LB", "RB", "Start", "Select", "LT", "RT", "L3", "R3", "LB+RB" };
@@ -56,7 +56,7 @@ namespace RS2QoL.Patches
         /// 既定の機能。v0.9.0 で SFC 版の配置 (物理位置で対応: 下 = キャンセル、右 = 決定、左 = ダッシュ、上 = マップ移動) に変えた。
         /// A = キャンセルのみ、B = 決定、X = ダッシュのみ、Y = マップ移動、Select = メニュー、LT = タイトルに戻る、RT = 倍速、
         /// L3 = MOD 設定画面、R3 = ゲームを終了 (v0.21.0。それまでは R3 も MOD 設定画面)。移動に使う左スティックの押し込みで終了ダイアログが出ないよう、終了は右側に置く。
-        /// LB + RB 同時押し = なし (v0.28.0。どこでも大臣は既定ではフィールドの LB 単独 ([Economy] FieldLB)。同時押しに割り当てるなら FieldLB / FieldRB を None に)。
+        /// LB + RB 同時押し = なし (v0.28.0。どこでもアバロンは既定ではフィールドの LB 単独 ([Economy] FieldLB)。同時押しに割り当てるなら FieldLB / FieldRB を None に)。
         /// 以前の既定は DefaultsHistory (Bind の移行判定に使う)。
         /// </summary>
         public static readonly PadFunction[] DefaultFunctions =
@@ -148,7 +148,7 @@ namespace RS2QoL.Patches
                 case PadFunction.MapMove: return "マップ移動 (SFC) / 情報・切替";
                 case PadFunction.Quit: return "ゲームを終了 (Steam へ)";
                 case PadFunction.Withdraw: return "国庫から引き出す";
-                case PadFunction.Treasury: return "どこでも大臣 (国庫の画面)";
+                case PadFunction.Treasury: return "どこでもアバロン (金庫番・倉庫・情報室などの窓)";
                 default: return f.ToString();
             }
         }
