@@ -154,6 +154,8 @@ namespace RS2QoL
             Patches.Wallet.Bind(Config);
             // どこでもアバロンの窓と、フィールドの LB / RB の役目 ([Economy] FieldLB / FieldRB、既定 LB = 画面、RB = 引き出す)
             Patches.TreasuryScreen.Bind(Config);
+            // 傷薬 / 高級傷薬 を空いている武器の欄に補充 ([Storage] RefillItem / RefillPerMember / RefillAfterBattle、既定 傷薬 / 2 個 / Off)
+            Patches.ItemRefill.Bind(Config);
             // 弔いの鍛冶: 皇帝が死んで継承すると 1 回たまり、開発所で国庫を使わずに開発できる ([MourningForge] Enabled、既定 Off = 本体どおり)
             Patches.MourningForge.Bind(Config);
             // 長時間プレイで重くなる問題の計測 ([Diagnostics] MemoryLogSeconds、Enabled とは独立、既定 0 = 出さない)
@@ -176,6 +178,7 @@ namespace RS2QoL
             Logger.LogInfo("[Economy] patched: Core.add_budget (TaxPercent=" + Patches.TaxIncome.Percent.Value + " TaxOnEscape=" + Patches.TaxIncome.OnEscape.Value + ")");
             Logger.LogInfo("[Spark] patched: Battle.check_get + test_mikiri (HeroMode=" + Patches.SparkBoost.Enabled.Value + " LastOneStanding=" + Patches.SparkBoost.LastOneStanding.Value + " Multiplier=" + Patches.SparkBoost.Multiplier.Value + " HpPercent=" + Patches.SparkBoost.HpPercent.Value + " LevelBonus=" + Patches.SparkBoost.LevelBonus.Value + " Floor=" + Patches.SparkBoost.FloorPercent.Value + "% Gap=" + Patches.SparkBoost.FloorMaxGap.Value + ")");
             Patches.PartyWeight.LogPatched();
+            Logger.LogInfo("[Refill] patched: Battle.dest (RefillItem=" + Patches.ItemRefill.CurrentItem + " PerMember=" + Patches.ItemRefill.Limit + " AfterBattle=" + Patches.ItemRefill.AfterBattle.Value + ")");
             Patches.WorldScrollSpeed.LogPatched();
             Patches.KeyMap.LogPatched();
 

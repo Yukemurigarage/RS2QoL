@@ -707,6 +707,52 @@ namespace RS2QoL
                 Value = () => TreasuryScreen.ButtonsText(FieldLRAction.Withdraw, FunctionButtonsText(PadFunction.Withdraw)),
                 Selectable = false,
             });
+            // 倉庫: 傷薬 / 高級傷薬 の補充 ([Storage] Refill*)。倉庫の機能は国庫と別のページに集める (ユーザー決定 2026-10-24: 似た機能を散らさない。
+            // どこでもアバロンの窓 (どこでも倉庫) には補充の行を置かない)
+            p = AddPage("倉庫");
+            p.Items.Add(new Item
+            {
+                Label = "空いている武器の欄に補充する品物",
+                Value = () => ItemRefill.ItemLabel(),
+                Left = () => ItemRefill.CycleItem(-1),
+                Entry = ItemRefill.Item,
+                Right = () => ItemRefill.CycleItem(+1),
+                Activate = () => ItemRefill.CycleItem(+1),
+                Changed = () => ItemRefill.CurrentItem != ItemRefill.KIZUGUSURI,
+            });
+            p.Items.Add(new Item
+            {
+                Label = "1 人に持たせる個数 (今持っている分も数える)",
+                Value = () => ItemRefill.Limit + " 個",
+                Left = () => ItemRefill.CycleLimit(-1),
+                Entry = ItemRefill.PerMember,
+                Right = () => ItemRefill.CycleLimit(+1),
+                Activate = () => ItemRefill.CycleLimit(+1),
+                Changed = () => ItemRefill.Limit != 2,
+            });
+            p.Items.Add(new Item
+            {
+                Label = "今の在庫 (持ち物 / 倉庫)",
+                Value = () => ItemRefill.StockLabel(),
+                Selectable = false,
+            });
+            p.Items.Add(new Item
+            {
+                Label = "今すぐ補充する (持ち物 → 倉庫 の順に取る)",
+                Activate = () =>
+                {
+                    if (!Wallet.InGame()) { s_status = "ゲーム中だけ使えます"; return; }
+                    int moved;
+                    s_status = ItemRefill.Refill(ItemRefill.CurrentItem, out moved);
+                    if (moved <= 0) UiParts.SeCancel();
+                },
+            });
+            AddToggle(p, "戦闘が終わるたびに自動で補充する (倉庫の在庫が減っていく)", ItemRefill.AfterBattle);
+            p.Items.Add(new Item
+            {
+                Label = "装備を変えられない仲間は飛ばす。全滅・皇帝が倒れた戦闘の後は補充しない",
+                Selectable = false,
+            });
 
             // 弔いの鍛冶: 皇帝が死んで継承すると 1 回たまり、開発所で国庫を使わずに開発できる。回数はセーブに入る
             p = AddPage(MourningForge.NAME);

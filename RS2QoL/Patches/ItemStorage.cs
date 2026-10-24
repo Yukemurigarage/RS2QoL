@@ -31,6 +31,28 @@ namespace RS2QoL.Patches
         }
 
         private static bool Ready { get { return Work.partydata != null && Work.partydata.Length > STORAGE_BASE + ITEM_IDS; } }
+        /// <summary>partydata が使える (ゲーム中)。ItemRefill 用。</summary>
+        public static bool InGame { get { return Ready; } }
+
+        /// <summary>持ち物から id を 1 個取る (装備するために消す。本体の soubi_a3 と同じ: 個数 −1、0 なら枠を詰める)。無ければ false。</summary>
+        public static bool TakeFromParty(int id)
+        {
+            if (!Ready) return false;
+            int slot = PartySlot(id);
+            if (slot < 0 || Work.partydata[PARTY_BASE + slot * 2 + 1] <= 0) return false;
+            Work.partydata[PARTY_BASE + slot * 2 + 1]--;
+            if (Work.partydata[PARTY_BASE + slot * 2 + 1] <= 0) PartyRemoveSlot(slot);
+            RefreshItem240Flag();
+            return true;
+        }
+
+        /// <summary>倉庫から id を 1 個取る (持ち物を経由せずに装備するため)。無ければ false。</summary>
+        public static bool TakeFromStorage(int id)
+        {
+            if (!Ready || StoredCount(id) <= 0) return false;
+            Work.partydata[STORAGE_BASE + id]--;
+            return true;
+        }
 
         public static int StoredCount(int id)
         {
