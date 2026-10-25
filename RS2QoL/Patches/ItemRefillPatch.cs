@@ -74,7 +74,10 @@ namespace RS2QoL.Patches
         /// 仲間全員の空いている武器の欄に id を入れる (1 人 Limit 個まで。既に持っている分は数に入れる)。持ち物から先に取り、無ければ倉庫から引き出す。
         /// 戻り値は結果の文。moved = 入れた個数。
         /// </summary>
-        public static string Refill(int id, out int moved)
+        public static string Refill(int id, out int moved) { return Refill(id, out moved, false); }
+
+        /// <summary>lines = true なら戦闘後の小窓用に 3 行 (改行 '\n') で短く (幅を取らないように。ユーザー 2026-10-25)。false は設定画面の 1 行の結果。</summary>
+        public static string Refill(int id, out int moved, bool lines)
         {
             moved = 0;
             if (!ItemStorage.InGame || Work.memberdata == null) return "ゲーム中だけ使える";
@@ -110,7 +113,13 @@ namespace RS2QoL.Patches
             }
             string stock = " (残り 持ち物 " + ItemStorage.HeldCount(id) + "、倉庫 " + ItemStorage.StoredCount(id) + ")";
             string msg;
-            if (moved > 0)
+            if (moved > 0 && lines)
+            {
+                msg = name + " を " + moved + " 個補充した" + (shortage ? " (途中まで)" : "")
+                    + "\n持ち物から " + fromBag + "、倉庫から " + fromStore
+                    + "\n残り 持ち物 " + ItemStorage.HeldCount(id) + "、倉庫 " + ItemStorage.StoredCount(id);
+            }
+            else if (moved > 0)
             {
                 msg = name + " を " + moved + " 個補充した (持ち物から " + fromBag + "、倉庫から " + fromStore + ")" + stock;
                 if (shortage) msg += " 足りなくなったので途中まで";
@@ -125,7 +134,7 @@ namespace RS2QoL.Patches
             return msg;
         }
 
-        /// <summary>戦闘の後始末 (Battle.dest) から。設定が On で、負け (継承) でなく、ソフトリセット中でなければ補充して小窓で知らせる。</summary>
+        /// <summary>戦闘の後始末 (Battle.dest) から。設定が On で、負け (継承) でなく、ソフトリセット中でなければ補充し、知らせは Tick に預ける。</summary>
         public static void OnBattleEnd(Battle b)
         {
             if (AfterBattle == null || !AfterBattle.Value) return;
@@ -134,12 +143,49 @@ namespace RS2QoL.Patches
             try
             {
                 int moved;
-                string msg = Refill(CurrentItem, out moved);
-                if (moved > 0) Wallet.ShowNotice(msg, NAME, false, 5f);
+                string msg = Refill(CurrentItem, out moved, true);
+                if (moved > 0)
+                {
+                    // Battle.dest はフィールドのフェードインより前。ここで出すと暗い画面に小窓だけが先に現れて驚かせる
+                    // (ユーザー 2026-10-25) ので、文を預けて、フィールドで自由に動けるようになった最初のフレームで出す (遅延は入れない)。
+                    s_pending = msg;
+                    s_pendingSince = UnityEngine.Time.realtimeSinceStartup;
+                }
             }
             catch (System.Exception e)
             {
                 Plugin.Log.LogWarning("[Refill] after battle failed: " + e.Message);
+            }
+        }
+
+        // ---------------------------------------------------------------- 戦闘後の知らせの先送り
+        private const float NOTICE_GIVE_UP = 30f;   // 戦闘の直後にイベントが続いてこれだけ出せなかったら捨てる (古い知らせを後から出さない)
+        private static string s_pending;
+        private static float s_pendingSince;
+
+        /// <summary>Plugin.OnGUI から毎フレーム。預かった知らせを、フィールドで自由になった (フェードインも終わった) 最初のフレームで出す。</summary>
+        public static void Tick()
+        {
+            if (s_pending == null) return;
+            try
+            {
+                float now = UnityEngine.Time.realtimeSinceStartup;
+                Core c = Main.core;
+                if (c == null || c.proc == null || Main.proc != 2 || c.proc[0] != 1 || SoftReset.Active || now > s_pendingSince + NOTICE_GIVE_UP)
+                {
+                    if (Plugin.DiagOn) Plugin.Log.LogInfo("[Refill] notice dropped (" + (now > s_pendingSince + NOTICE_GIVE_UP ? "timeout" : "left the field") + ")");
+                    s_pending = null;
+                    return;
+                }
+                if (!Wallet.IsFieldFree(c)) return;
+                Wallet.ShowNotice(s_pending, NAME, false, 5f);
+                if (Plugin.DiagOn) Plugin.Log.LogInfo("[Refill] notice shown " + (now - s_pendingSince).ToString("0.00") + " s after Battle.dest");
+                s_pending = null;
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogWarning("[Refill] notice failed: " + e.Message);
+                s_pending = null;
             }
         }
     }

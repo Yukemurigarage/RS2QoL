@@ -189,7 +189,10 @@ namespace RS2QoL
         }
 
         /// <summary>枠の中に壁紙を敷いて描く。gray なら倉庫画面の灰色の石の紙 (どこでもアバロンの窓)、そうでなければメニューの羊皮紙。</summary>
-        public static bool DrawPaperWindow(Rect r, bool gray)
+        public static bool DrawPaperWindow(Rect r, bool gray) { return DrawPaperWindow(r, gray, Vector2.zero); }
+
+        /// <summary>shift は壁紙を画面の定位置からずらす量。窓を動かす (すべり込み・昇り) 時に窓と同じ量を渡すと、壁紙が窓に付いて動く (渡さないと窓の枠だけが動いて壁紙は止まって見える。ユーザー 2026-10-25)。</summary>
+        public static bool DrawPaperWindow(Rect r, bool gray, Vector2 shift)
         {
             Load();
             Texture2D paper = gray ? s_wallpaperGray : s_wallpaper;
@@ -200,7 +203,7 @@ namespace RS2QoL
             // 壁紙は画面全体を覆う大きさ (本体の MenuBackground と同じ比率で、画面が 16:9 でなければ中央合わせで切る)
             float scale = Mathf.Max(Screen.width / (float)paper.width, Screen.height / (float)paper.height);
             float pw = paper.width * scale, ph = paper.height * scale;
-            float px = (Screen.width - pw) / 2f, py = (Screen.height - ph) / 2f;
+            float px = (Screen.width - pw) / 2f + shift.x, py = (Screen.height - ph) / 2f + shift.y;
             // 枠の角は丸いので、壁紙の四隅も同じ半径で丸める。角の部分だけ壁紙の画素を写した小さなテクスチャに
             // 円弧のアルファを付けて描き (BakeCorners)、残りは上・中・下の 3 枚に分けてそのまま描く
             int c = Mathf.CeilToInt(PAPER_RADIUS * Unit);

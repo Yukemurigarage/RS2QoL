@@ -57,19 +57,20 @@ namespace RS2QoL.Patches
             string kind = (dev & 4) != 0 ? "武器" : "防具";
             Plugin.Log.LogInfo("[DevNotice] applied: " + kind + " done (flag115 " + dev + " left " + beforeLeft + " -> 0 new_flag51 " + done + " enabled " + On + ")");
             if (!On || SoftReset.Active) return;
-            if (MourningScene.SmithsReady())
-                Wallet.ShowNotice(kind + "が仕上がりました", NAME, DrawSmiths, MourningScene.SmithPairDots, SECONDS);
+            s_shown = Time.realtimeSinceStartup;
+            // 職人 2 人が文言を挟む (左 = 武器の職人が右向き、右 = 防具の職人が左向き。弔いの鍛冶の窓と同じ並び。ユーザー 2026-10-25)
+            bool hasW = MourningScene.HasSmithImage(0), hasA = MourningScene.HasSmithImage(1);
+            if (hasW || hasA)
+                Wallet.ShowNotice(kind + "が仕上がりました", NAME, hasW ? DrawWeaponSmith : (System.Action<Rect, int>)null, hasW ? MourningScene.SmithDots : 0,
+                    hasA ? DrawArmorSmith : (System.Action<Rect, int>)null, hasA ? MourningScene.SmithDots : 0, SECONDS);
             else
                 Wallet.ShowNotice(kind + "が仕上がりました", NAME, false, SECONDS);
         }
 
         private static float s_shown;
 
-        private static void DrawSmiths(Rect r, int dot)
-        {
-            if (s_shown == 0f || Time.realtimeSinceStartup - s_shown > SECONDS + 1f) s_shown = Time.realtimeSinceStartup;
-            MourningScene.DrawSmithPair(r, dot, s_shown);
-        }
+        private static void DrawWeaponSmith(Rect r, int dot) { MourningScene.DrawSmithSide(r, 0, dot, s_shown); }
+        private static void DrawArmorSmith(Rect r, int dot) { MourningScene.DrawSmithSide(r, 1, dot, s_shown); }
     }
 
     /// <summary>戦闘後スクリプトの APPNEW (ivent_no[1] == 32 で開発の残り戦闘数を減らす)。前後で new_flag 51 を比べる。</summary>

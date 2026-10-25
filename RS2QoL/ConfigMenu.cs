@@ -634,6 +634,7 @@ namespace RS2QoL
             });
             AddToggle(p, "退却した戦闘でも税収を入れる (本体どおり)", TaxIncome.OnEscape);
             AddToggle(p, "開発所の開発が仕上がったら戦闘の後に知らせる", DevNotice.Enabled);
+            AddToggle(p, "玉座で何か起こる時は報告書に出し、女官が知らせる", ThroneHint.Enabled);
             p.Items.Add(new Item
             {
                 Label = "敵の強さ・味方の成長・宝箱の N 万クラウン・施設の費用は変わらない",

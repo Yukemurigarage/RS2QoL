@@ -38,7 +38,8 @@ namespace RS2QoL.Patches
         private const float ANIM_SECONDS = 8f / 30f;    // 歩き (作業) のコマ送り (本体の people_anime は 8 論理フレームごと)
         private const float PAUSE_BEFORE_WINDOW = 0.9f; // 暗転が終わってから窓が出始めるまで (皇帝だけが残る間)
         private const float WINDOW_IN = 0.5f;           // 窓のフェードイン
-        private const float WINDOW_OUT = 0.35f;         // 閉じた後の窓のフェードアウト
+        private const float WINDOW_OUT = 1.0f;          // 閉じた後の窓のフェードアウト (昇りながら消える)
+        private const float WINDOW_RISE = 3f;           // その間に窓が昇る高さ (文字の大きさ × この数。魂が天に昇るイメージ = ユーザー 2026-10-25)
         private const float EMPEROR_OUT = 0.9f;         // 閉じた後、皇帝の絵が暗転に溶ける時間
         private const float PAUSE_AFTER = 0.8f;         // 皇帝が消えてから本体の流れ (→ 振り返り) に進むまでの間
         private const float HOLD_TIMEOUT = 60f;         // 何かの事情で演出が進まない時に script を放す
@@ -155,6 +156,24 @@ namespace RS2QoL.Patches
             return HasSmith(0) || HasSmith(1);
         }
 
+        /// <summary>職人 1 人の絵の幅 (本体のドット数)。</summary>
+        public const int SmithDots = FRAME;
+
+        /// <summary>武器の職人 (0) / 防具の職人 (1) の絵が組めているか (初回に組む)。</summary>
+        public static bool HasSmithImage(int i) { EnsureParts(); return HasSmith(i); }
+
+        /// <summary>
+        /// 職人 1 人を r の中に (縦は中央、歩きのコマは 1 ドット下)。i = 0 武器の職人 (右向き = 文字の左に置く)、1 防具の職人 (左向き = 文字の右に置く)。
+        /// 開発所の知らせが文字の左右に 1 人ずつ置く (弔いの鍛冶の窓と同じ並び)。
+        /// </summary>
+        public static void DrawSmithSide(Rect r, int i, int dot, float t0)
+        {
+            if (!HasSmith(i)) return;
+            float spr = FRAME * dot;
+            float y = r.y + Mathf.Round((r.height - spr - dot) / 2f);
+            DrawSmith(new Rect(i == 0 ? r.x : r.xMax - spr, y, spr, spr), i, i == 0, dot, t0);
+        }
+
         /// <summary>職人 2 人を r の中に向かい合わせて描く (左 = 武器の職人が右向き、右 = 防具の職人が左向き)。t0 は歩きの位相の起点。</summary>
         public static void DrawSmithPair(Rect r, int dot, float t0)
         {
@@ -246,13 +265,14 @@ namespace RS2QoL.Patches
             }
             else if (s_phase == Phase.WindowIn && now - s_phaseStart >= WINDOW_IN) s_phase = Phase.Open;
 
-            float emperorAlpha = 1f, windowAlpha = 0f;
+            float emperorAlpha = 1f, windowAlpha = 0f, rise = 0f;
             switch (s_phase)
             {
                 case Phase.WindowIn: windowAlpha = Mathf.Clamp01((now - s_phaseStart) / WINDOW_IN); break;
                 case Phase.Open: windowAlpha = 1f; break;
                 case Phase.Closing:
                     windowAlpha = Mathf.Clamp01(1f - (now - s_closeTime) / WINDOW_OUT);
+                    rise = (1f - windowAlpha) * (1f - windowAlpha);                     // ゆっくり動き出して速くなる (ease-in)
                     emperorAlpha = Mathf.Clamp01(1f - (now - s_closeTime) / EMPEROR_OUT);
                     break;
             }
@@ -270,7 +290,7 @@ namespace RS2QoL.Patches
                 GUI.DrawTextureWithTexCoords(er, s_emperor, mirror ? new Rect(1f, 0f, -1f, 1f) : new Rect(0f, 0f, 1f, 1f), true);
             }
             GUI.color = old;
-            if (windowAlpha > 0f) DrawWindow(er, windowAlpha);
+            if (windowAlpha > 0f) DrawWindow(er, windowAlpha, rise);
         }
 
         private static void EnsureStyles(int size)
@@ -296,7 +316,8 @@ namespace RS2QoL.Patches
         /// 文字の左右に職人 2 人が向かい合う窓を、倒れた皇帝の少し上に (画面の中央寄せ)。
         /// alpha はフェード (部品の描画は GUI.color を無視するので、描いた後に黒を (1 − alpha) で重ねる。背景が黒なので同じに見える)。
         /// </summary>
-        private static void DrawWindow(Rect emperor, float alpha)
+        /// <summary>窓。rise (0..1) は閉じる時に昇った割合: 文字の大きさ × WINDOW_RISE だけ上へずらし、黒を重ねて薄くする。</summary>
+        private static void DrawWindow(Rect emperor, float alpha, float rise)
         {
             int size = Mathf.Max(12, Screen.height / 36);                     // Wallet.DrawNotice と同じ文字の大きさ
             EnsureStyles(size);
@@ -318,8 +339,10 @@ namespace RS2QoL.Patches
             float x = Mathf.Round((Screen.width - w) / 2f);
             float y = Mathf.Round(emperor.y - size * 0.8f - h);               // 皇帝の少し上
             y = Mathf.Clamp(y, Mathf.Round(size * 1.5f), Mathf.Max(Mathf.Round(size * 1.5f), Screen.height - h - size));
+            float risePx = Mathf.Round(rise * size * WINDOW_RISE);
+            y -= risePx;                                                     // 閉じる時は上へ昇る (上端より外に出てもよい: 同時に消えていく)
             Rect r = new Rect(x, y, Mathf.Round(w), Mathf.Round(h));
-            bool paper = UiParts.DrawPaperWindow(r, true);
+            bool paper = UiParts.DrawPaperWindow(r, true, new Vector2(0f, -risePx));   // 壁紙も一緒に昇る (ユーザー 2026-10-25: 背景が動かないのが気になる)
             if (!paper) UiParts.DrawDarkBox(r);
             UiParts.Shadow = !paper;
             float cy = r.y + padY;

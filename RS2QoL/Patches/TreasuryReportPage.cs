@@ -125,7 +125,9 @@ namespace RS2QoL.Patches
             float bottom = cy + bodyH;
             float colW = Mathf.Round(cw / 2f), labelW = fontSize * 4.2f, labelW2 = fontSize * 6f;   // 右列の見出し (戦闘回数・開発所) は 4 文字なので広く (ユーザー要望 2026-10-24: 余白を開ける)
             // 上 = 情報官の吹き出し (大臣のすぐ下に尾を向けて)、下 = 数字の報告 REPORT_ROWS 行 (ユーザー要望 2026-10-24: 吹き出しが上)
-            float statsH = REPORT_ROWS * lineH;
+            // 玉座のヒント ([Avalon] ThroneHint) が On なら 1 行増える (座ると何かが起こるか。ThroneHint.RowText)
+            string throne = ThroneHint.RowText();
+            float statsH = (REPORT_ROWS + (throne != null ? 1 : 0)) * lineH;
             float bubbleBottom = bottom - statsH - Mathf.Round(lineH * 0.3f);
 
             // 情報官の吹き出し。仲間の窓と同じ格子・余白
@@ -189,6 +191,11 @@ namespace RS2QoL.Patches
             DrawReportCell(cx + colW, sy, cw - colW, labelW2, lineH, "開発所", s_repDev);
             sy += lineH;
             DrawReportCell(cx, sy, cw, labelW, lineH, "施設", s_repFacilities);
+            if (throne != null)
+            {
+                sy += lineH;
+                DrawReportCell(cx, sy, cw, labelW, lineH, ThroneHint.ROW_LABEL, throne);
+            }
             return bottom;
         }
 

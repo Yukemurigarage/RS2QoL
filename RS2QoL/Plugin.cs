@@ -158,6 +158,8 @@ namespace RS2QoL
             Patches.ItemRefill.Bind(Config);
             // 開発所の開発が仕上がった戦闘の直後に小窓で知らせる ([Avalon] DevNotice、既定 On。本体は情報室で聞くまで何も言わない)
             Patches.DevNotice.Bind(Config);
+            // 玉座に座ると何かが起こる時、報告書に 1 行出し、そうなった瞬間に女官の小窓で知らせる ([Avalon] ThroneHint、既定 On。本体は何も言わない)
+            Patches.ThroneHint.Bind(Config);
             // 弔いの鍛冶: 皇帝が死んで継承すると 1 回たまり、開発所で国庫を使わずに開発できる ([MourningForge] Enabled、既定 Off = 本体どおり)
             Patches.MourningForge.Bind(Config);
             // 長時間プレイで重くなる問題の計測 ([Diagnostics] MemoryLogSeconds、Enabled とは独立、既定 0 = 出さない)
@@ -182,6 +184,7 @@ namespace RS2QoL
             Patches.PartyWeight.LogPatched();
             Logger.LogInfo("[Refill] patched: Battle.dest (RefillItem=" + Patches.ItemRefill.CurrentItem + " PerMember=" + Patches.ItemRefill.Limit + " AfterBattle=" + Patches.ItemRefill.AfterBattle.Value + ")");
             Logger.LogInfo("[DevNotice] patched: Core.appnew_ivent (DevNotice=" + Patches.DevNotice.Enabled.Value + ")");
+            Logger.LogInfo("[ThroneHint] ready: msg 80 conditions read every field frame (ThroneHint=" + Patches.ThroneHint.Enabled.Value + ")");
             Patches.WorldScrollSpeed.LogPatched();
             Patches.KeyMap.LogPatched();
 
@@ -247,6 +250,8 @@ namespace RS2QoL
             Patches.BattleReview.Draw();      // 背景を黒く塗るので一番下に (診断ログの印などの小窓が隠れないように。ユーザー 2026-10-21)
             Patches.GameSpeed.DrawIndicator();
             Patches.InputDiag.DrawBadge();
+            Patches.ItemRefill.Tick();        // 戦闘後の補充の知らせ: フィールドのフェードインが終わって少し置いてから出す
+            Patches.ThroneHint.Tick();        // 玉座のヒント: フィールドで自由な時に判定し、起こるようになった瞬間に女官の知らせを出す (知らせの描画の前)
             Patches.Wallet.DrawNotice();
             Patches.ArmorInfo.Draw();
             Patches.TreasuryScreen.Draw();

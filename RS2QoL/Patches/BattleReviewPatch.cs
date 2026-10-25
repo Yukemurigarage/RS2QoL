@@ -125,6 +125,11 @@ namespace RS2QoL.Patches
         private static string s_reason = "";
         private static float s_openTime;                   // 開いた時刻 (Time.realtimeSinceStartup)。黒い背景のフェードに使う
         private const float BLACK_FADE_SECONDS = 0.5f;     // 開いてから背景が真っ黒になるまで (ユーザー 2026-10-20: 全滅の後なので真っ暗がよい。閉じたら元の明るさ)
+        // 窓は知らせの小窓 (Wallet.DrawNotice) と同じ速さで、右の画面外から減速してすべり込み (ease-out)、閉じると加速して右へ抜ける (ease-in)。
+        // 抜け終わるまで s_open のまま (本体の継承の画面は止めたまま、入力は捨てる)。ユーザー 2026-10-25
+        private const float SLIDE_IN = 0.4f, SLIDE_OUT = 0.3f;
+        private static bool s_closing;                     // 閉じる操作の後、右へ抜けている間
+        private static float s_closeTime;
 
         public static bool IsOpen { get { return s_open; } }
 
@@ -149,7 +154,7 @@ namespace RS2QoL.Patches
         {
             s_acts.Clear();
             s_shown = false;
-            s_open = false;
+            s_open = false; s_closing = false;
             s_guard = false;
             s_namesBuilt = false;
             s_learned.Clear();
@@ -266,7 +271,7 @@ namespace RS2QoL.Patches
         private static void Fail(string where, Exception e)
         {
             s_failed = true;
-            s_open = false;
+            s_open = false; s_closing = false;
             Plugin.Log.LogError("[BattleReview] " + where + " failed, feature disabled until restart: " + e);
         }
 
@@ -345,15 +350,30 @@ namespace RS2QoL.Patches
             Plugin.Log.LogInfo("[BattleReview] applied: open (" + s_reason + ") at the succession screen");
         }
 
+        /// <summary>閉じる操作。音を鳴らして右へ抜け始める。抜け終わったら FinishClose。</summary>
         private static void Close()
         {
+            if (!s_open || s_closing) return;
+            s_closing = true;
+            s_closeTime = Time.realtimeSinceStartup;
+            UiParts.SeClose();
+            Plugin.Log.LogInfo("[BattleReview] close");
+        }
+
+        private static void FinishClose()
+        {
             if (!s_open) return;
-            s_open = false;
+            s_open = false; s_closing = false;
+            s_closing = false;
             s_guard = true;
             if (!s_preview) s_captured = false;   // 1 回出したら捨てる (次に継承の画面が出る時に再び開かない)。プレビューは負けの記録を消さない
             s_preview = false;
-            UiParts.SeClose();
-            Plugin.Log.LogInfo("[BattleReview] close");
+        }
+
+        /// <summary>右へ抜けている途中なら、時間が来た時に閉じ終える。Draw と Tick の両方から (設定画面が開いていて Draw が走らない時の保険)。</summary>
+        private static void AdvanceClose()
+        {
+            if (s_closing && Time.realtimeSinceStartup - s_closeTime >= SLIDE_OUT) FinishClose();
         }
 
         private static bool PageBackDown() { return PadMap.IsPhysicalDown(PadMap.PHYS_LB) || KeyMap.IsDown(PadFunction.L); }
@@ -382,6 +402,7 @@ namespace RS2QoL.Patches
                 if ((key & (BTN_OK | BTN_CANCEL)) == 0) s_guard = false;
                 return 0;
             }
+            if (s_closing) { AdvanceClose(); s_prevKey = key; return 0; }   // 右へ抜けている間は入力を捨てるだけ
             int pressed = s_prevKey < 0 ? 0 : key & ~s_prevKey;
             s_prevKey = key;
             bool escEdge = KeyEdge(first, KeyCode.Escape) || (s_preview && KeyEdge(first, KEY_PREVIEW));
@@ -797,18 +818,26 @@ namespace RS2QoL.Patches
             float footH = lineH;
             float w = Mathf.Min(Screen.width - 2 * outer, Mathf.Round(fontSize * 46f));
             float h = Mathf.Min(Screen.height - 2 * outer, Mathf.Round(pad * 2 + headH + lineH * 0.3f + lineH * 18.5f + lineH * 0.3f + footH));
-            float x = Mathf.Round((Screen.width - w) / 2f);
+            float now = Time.realtimeSinceStartup;
+            AdvanceClose();
+            if (!s_open) return;
+            // 中央が定位置。出る時は右の画面外から減速してすべり込み、閉じると加速して右へ抜ける (知らせの小窓と同じ 0.4 / 0.3 秒)
+            float off = 0f;                                                                      // 0 = 定位置、1 = 画面の右外
+            if (s_closing) { float t = Mathf.Clamp01((now - s_closeTime) / SLIDE_OUT); off = t * t * t; }
+            else if (now < s_openTime + SLIDE_IN) { float t = Mathf.Clamp01((now - s_openTime) / SLIDE_IN); off = (1f - t) * (1f - t) * (1f - t); }
+            float restX = Mathf.Round((Screen.width - w) / 2f);
+            float x = Mathf.Round(restX + off * (Screen.width - restX));
             float y = Mathf.Round((Screen.height - h) / 2f);
             Rect win = new Rect(x, y, w, h);
-            // 背景を真っ黒に (開いてから BLACK_FADE_SECONDS で暗くなる。閉じると描かなくなるので元の明るさに戻り、本体が自分の暗転に進む)
+            // 背景を真っ黒に (開いてから BLACK_FADE_SECONDS で暗くなる。閉じ終わると描かなくなるので元の明るさに戻り、本体が自分の暗転に進む)
             {
-                float a = Mathf.Clamp01((Time.realtimeSinceStartup - s_openTime) / BLACK_FADE_SECONDS);
+                float a = Mathf.Clamp01((now - s_openTime) / BLACK_FADE_SECONDS);
                 Color old = GUI.color;
                 GUI.color = new Color(0f, 0f, 0f, a);
                 GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), Texture2D.whiteTexture);
                 GUI.color = old;
             }
-            UiParts.Shadow = !UiParts.DrawPaperWindow(win);
+            UiParts.Shadow = !UiParts.DrawPaperWindow(win, false, new Vector2(x - restX, 0f));   // 壁紙も窓と一緒に動かす
             if (UiParts.Shadow) GUI.Box(win, GUIContent.none, s_box);
             float cx = x + pad, cy = y + pad, cw = w - 2 * pad;
 

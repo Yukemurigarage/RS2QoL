@@ -184,6 +184,8 @@ namespace RS2QoL.Patches
         private static int s_lastBtnFrame = -1;
         private static string s_notice = "";
         private static float s_noticeUntil;
+        private static float s_noticeStart;                 // 出し始めた時刻 (右からすべり込む起点)
+        private const float SLIDE_IN = 0.4f, SLIDE_OUT = 0.3f;   // 右の画面外からすべり込む (減速) / 右へ抜ける (加速) 時間。macOS の通知風 (ユーザー 2026-10-25)
         private static GUIStyle s_style;
         private static int s_styleSize = -1;
 
@@ -221,7 +223,13 @@ namespace RS2QoL.Patches
             s_noticeTitle = title;
             s_noticeMinister = withMinister;
             s_noticePicture = null;
-            s_noticeUntil = Time.realtimeSinceStartup + seconds;
+            s_noticePictureRight = null;
+            float now = Time.realtimeSinceStartup;
+            // 出ている途中に次の知らせが来たら、すべり込みをやり直さず今の位置で中身だけ替える。抜ける途中なら今の位置からすべり込み直す
+            if (s_notice.Length > 0 && now <= s_noticeUntil) { }
+            else if (s_notice.Length > 0 && now <= s_noticeUntil + SLIDE_OUT) s_noticeStart = now - SLIDE_IN * (1f - Mathf.Clamp01((now - s_noticeUntil) / SLIDE_OUT));
+            else s_noticeStart = now;
+            s_noticeUntil = now + seconds;
         }
 
         /// <summary>大臣の代わりに別の絵を添えて出す (開発所の職人など)。picture は (枠, 1 ドットの px) で呼ばれ、枠の幅は pictureDots ドット、高さは大臣と同じ。</summary>
@@ -231,10 +239,22 @@ namespace RS2QoL.Patches
             s_noticePicture = picture;
             s_noticePictureDots = pictureDots;
         }
+
+        /// <summary>文字の左右に絵を置いて出す (開発所の職人 2 人が文言を挟む。弔いの鍛冶の窓と同じ並び)。right が null なら左だけ。</summary>
+        public static void ShowNotice(string text, string title, System.Action<Rect, int> left, int leftDots, System.Action<Rect, int> right, int rightDots, float seconds)
+        {
+            ShowNotice(text, title, left, leftDots, seconds);
+            s_noticePictureRight = right;
+            s_noticePictureRightDots = rightDots;
+        }
+
+        /// <summary>画面上部の知らせが出ている間 true (他の知らせはその間待つ)。</summary>
+        public static bool NoticeVisible { get { return s_notice.Length > 0 && Time.realtimeSinceStartup <= s_noticeUntil + SLIDE_OUT; } }
+
         private static string s_noticeTitle = TITLE;
         private static bool s_noticeMinister = true;
-        private static System.Action<Rect, int> s_noticePicture;
-        private static int s_noticePictureDots;
+        private static System.Action<Rect, int> s_noticePicture, s_noticePictureRight;
+        private static int s_noticePictureDots, s_noticePictureRightDots;
 
         private static GUIStyle s_stylePaper;
         private static GUIStyle s_styleTitle;
@@ -242,12 +262,13 @@ namespace RS2QoL.Patches
         private const string TITLE = "どこでも金庫番";
 
         /// <summary>
-        /// 画面上部中央に結果を数秒出す (Plugin.OnGUI から)。どこでもアバロンの窓と同じ灰色の紙の小窓に、大臣の絵 (歩きアニメ) を添える
+        /// 画面の右上に結果を数秒出す (Plugin.OnGUI から。右からすべり込み、右へ抜ける)。どこでもアバロンの窓と同じ灰色の紙の小窓に、大臣の絵 (歩きアニメ) を添える
         /// (窓を開かずに引き出した時も大臣が出てくるように)。部品が無ければ暗い箱に黄色の文字。
         /// </summary>
         public static void DrawNotice()
         {
-            if (s_notice.Length == 0 || Time.realtimeSinceStartup > s_noticeUntil) return;
+            float now = Time.realtimeSinceStartup;
+            if (s_notice.Length == 0 || now > s_noticeUntil + SLIDE_OUT) return;
             if (ConfigMenu.IsOpen || TreasuryScreen.IsOpen) return; // 設定画面・大臣の窓の中では s_status に出る
             int size = Mathf.Max(12, Screen.height / 36);
             if (s_style == null || s_styleSize != size)
@@ -270,20 +291,36 @@ namespace RS2QoL.Patches
             // 文字は小さいまま、2 行まとめて絵の中央の高さに)。幅は文字の実測、画面に入らなければ切る
             bool minister = s_noticeMinister && TreasuryScreen.HasMinister;
             bool picture = minister || s_noticePicture != null;
+            bool pictureRight = s_noticePictureRight != null;                                    // 文字の右にも絵 (職人 2 人が文言を挟む)
             string title = s_noticeTitle;
             int dot = TreasuryScreen.MinisterDot;
-            float sprH = picture ? dot * TreasuryScreen.MinisterDots : 0f;                       // 絵の高さ (大臣と同じ)
-            float spr = minister ? sprH : s_noticePicture != null ? dot * s_noticePictureDots : 0f;   // 絵の幅
+            float sprH = picture || pictureRight ? dot * TreasuryScreen.MinisterDots : 0f;       // 絵の高さ (大臣と同じ)
+            float spr = minister ? sprH : s_noticePicture != null ? dot * s_noticePictureDots : 0f;   // 左の絵の幅
+            float sprR = pictureRight ? dot * s_noticePictureRightDots : 0f;                      // 右の絵の幅
             // 左右の余白は上下よりたっぷり取る (お金の話なので窮屈に見せない)
             float padY = Mathf.Round(size * 0.5f);
             float padX = Mathf.Round(size * 1.6f);
             float gap = picture ? Mathf.Round(size * 0.9f) : 0f;
+            float gapR = pictureRight ? Mathf.Round(size * 0.9f) : 0f;
             float lineH = Mathf.Round(size * 1.3f);
-            float textW = Mathf.Max(s_style.CalcSize(new GUIContent(title)).x, s_style.CalcSize(new GUIContent(s_notice)).x) + size * 0.3f;
-            float w = Mathf.Min(Screen.width - size * 2, padX * 2 + spr + gap + textW);
-            float h = Mathf.Max(sprH + (s_noticePicture != null ? dot : 0f), lineH * 2) + padY * 2;   // 職人の歩きのコマは 1 ドット下がる
-            Rect r = new Rect(Mathf.Round((Screen.width - w) / 2), Mathf.Round(size * 1.5f), Mathf.Round(w), Mathf.Round(h));
-            bool paper = UiParts.DrawPaperWindow(r, true);
+            // 本文は '\n' で複数行 (傷薬の補充は 3 行で幅を縮める。ユーザー 2026-10-25)。幅は見出しと各行の実測の最大
+            string[] lines = s_notice.Split('\n');
+            float textW = s_style.CalcSize(new GUIContent(title)).x;
+            for (int i = 0; i < lines.Length; i++) textW = Mathf.Max(textW, s_style.CalcSize(new GUIContent(lines[i])).x);
+            textW += size * 0.3f;
+            float w = Mathf.Min(Screen.width - size * 2, padX * 2 + spr + gap + textW + gapR + sprR);
+            float textH = lineH * (1 + lines.Length);                                               // 見出し + 本文の行数
+            float h = Mathf.Max(sprH + (s_noticePicture != null || pictureRight ? dot : 0f), textH) + padY * 2;   // 職人の歩きのコマは 1 ドット下がる
+            // 右上に置く。出る時は右の画面外から減速しながらすべり込み (ease-out)、時間が来たら加速しながら右へ抜ける (ease-in)。
+            // 縦は倍速の印 (右上、size/2 〜 2 size) の下
+            float off = 0f;                                                                      // 0 = 定位置、1 = 画面の右外
+            if (now < s_noticeStart + SLIDE_IN) { float t = Mathf.Clamp01((now - s_noticeStart) / SLIDE_IN); off = (1f - t) * (1f - t) * (1f - t); }
+            else if (now > s_noticeUntil) { float t = Mathf.Clamp01((now - s_noticeUntil) / SLIDE_OUT); off = t * t * t; }
+            float margin = Mathf.Round(size * 0.8f);
+            float x = Screen.width - margin - w + off * (w + margin);
+            Rect r = new Rect(Mathf.Round(x), Mathf.Round(size * 2.2f), Mathf.Round(w), Mathf.Round(h));
+            float shiftX = r.x - Mathf.Round(Screen.width - margin - w);                             // 壁紙も窓と一緒に動かす (定位置からのずれ)
+            bool paper = UiParts.DrawPaperWindow(r, true, new Vector2(shiftX, 0f));
             if (!paper) UiParts.DrawDarkBox(r);
             UiParts.Shadow = !paper;
             if (minister) TreasuryScreen.DrawMinister(new Rect(r.x + padX, r.y + Mathf.Round((h - sprH) / 2f), spr, sprH));
@@ -292,10 +329,17 @@ namespace RS2QoL.Patches
                 try { s_noticePicture(new Rect(r.x + padX, r.y + padY, spr, h - padY * 2), dot); }
                 catch (System.Exception e) { s_noticePicture = null; Plugin.Log.LogWarning("[Economy] notice picture failed: " + e.Message); }
             }
+            if (pictureRight)
+            {
+                try { s_noticePictureRight(new Rect(r.xMax - padX - sprR, r.y + padY, sprR, h - padY * 2), dot); }
+                catch (System.Exception e) { s_noticePictureRight = null; Plugin.Log.LogWarning("[Economy] notice right picture failed: " + e.Message); }
+            }
             float tx = r.x + padX + spr + gap;
-            float ty = r.y + Mathf.Round((h - lineH * 2) / 2f);
-            UiParts.Label(new Rect(tx, ty, r.xMax - padX - tx, lineH), title, paper ? s_styleTitlePaper : s_styleTitle);
-            UiParts.Label(new Rect(tx, ty + lineH, r.xMax - padX - tx, lineH), s_notice, paper ? s_stylePaper : s_style);
+            float textRight = r.xMax - padX - sprR - gapR;
+            float ty = r.y + Mathf.Round((h - textH) / 2f);
+            UiParts.Label(new Rect(tx, ty, textRight - tx, lineH), title, paper ? s_styleTitlePaper : s_styleTitle);
+            for (int i = 0; i < lines.Length; i++)
+                UiParts.Label(new Rect(tx, ty + lineH * (i + 1), textRight - tx, lineH), lines[i], paper ? s_stylePaper : s_style);
         }
     }
 
