@@ -458,6 +458,7 @@ namespace RS2QoL.Patches
         {
             UiField.initPrevMap();
             RecordAssist.RecordAssistReset();
+            BattleReview.OnSoftReset();   // 全滅の振り返りの窓が開いたままならタイトルに持ち越さない (実機 2026-10-25)
             Try("title bgm", StopTitleBgmForReset);
             core.reset_flg = 2;
             if (immediate) core.reset();

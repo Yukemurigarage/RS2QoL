@@ -422,6 +422,7 @@ namespace RS2QoL
             AddToggle(p, "結果表示はボタンを押すまで待つ", BattleResult.WaitForPress);
             AddToggle(p, "L / R で退却 / 防御 (スーファミ版)", BattleLR.Enabled);
             AddToggle(p, "全滅した時に「戦闘の振り返り」の窓を出す", BattleReview.Enabled);
+            AddToggle(p, "振り返りに「装備のヒント」の 2 ページを足す", BattleReview.EquipHints);
 
             p = AddPage("戦闘の見た目");
             AddToggle(p, "ダメージ数字をスーファミ版のドット文字で", DamageFont.Sfc);

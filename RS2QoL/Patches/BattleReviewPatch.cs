@@ -22,25 +22,54 @@ namespace RS2QoL.Patches
     ///   +5 結果 (1 = HP に当たった、2 = LP、8 = 戦闘不能、16 = 回復、32 = 外れ)、+6 数字 (ダメージ / 回復量)。
     ///   技は A0[4] (10 未満は武器の通常攻撃で、名前は A0[3] の武器)、ターンは Battle.turn。
     /// 敵の弱点: monster_data の 8 種の防御力 (枠の [85..92] = 斬 打 突 射 熱 冷 雷 状)。ダメージ式は「武器の威力 − 防御力」の
-    /// 引き算 (damage00 等) で、128 以上 (bit 0x80) はその属性を無効にする。一番低い値を弱点として赤で出す。
+    /// 引き算 (damage00 等) で、128 以上 (bit 0x80) はその属性を無効にする。効き具合は絶対値で 4 段階 (Rate: ◎ ○ △ ×) に分けて出す。
     /// 見切り: waza_data[技*10+8] の bit 0x4000 が立つ技だけ見切れる。難度は Data.mikiri_level[技]。partydata[289..] の旗が
     /// 立っていればもう誰かが覚えている (check_mikiriflag で判定を飛ばす)。
     /// </summary>
     internal static class BattleReview
     {
         public static ConfigEntry<bool> Enabled;
+        public static ConfigEntry<bool> EquipHints;
+        public static ConfigEntry<int> WeakMax, NormalMax, ResistMax;
+
+        // ---------------------------------------------------------------- 効き具合の 4 段階 (ユーザー 2026-10-25: 敵側の数字は記号と色に。判定は絶対値)
+        //
+        // 本体の式 (Battle.set_defence → damage00 (武器) / damage01 (術)): 技の属性のうち、相手の防御力が一番低いものを d として
+        //   武器: ((威力 − d、1 未満は 1) × 補正 + 基礎) / 64 × 技の倍率 + 乱数 − d × 5
+        //   術:   (系統レベルや魔力の項) + 乱数 − d × 5
+        //   (d の bit 0x80 = 無効 → 0)
+        // d は「威力から引く」(武器だけ) と「最後に d × 5 を引く」の 2 か所で効く。1 世代目の武器の威力は 7〜15 なので、d がそれを超えると
+        // 前者は底 (1) に張り付いて武器の威力が意味を失い、後者は d = 20 で 1 発につき 100 (序盤の 1 発分) を削る。この窓に出る敵の値は 2〜24 ほど。
+        // 既定: ◎ 6 以下 (威力 11 の武器でも (11 − 6) = 5 倍の差が残り、引かれるのも 30 まで)、○ 7〜14 (威力の差は薄いが 1 発分は残る)、
+        //       △ 15〜19、× 20 以上と無効 (1 発 100 を削られる)。境界は cfg ([BattleReview] WeakMax / NormalMax / ResistMax) で変えられる。
+        private static readonly string[] RateMarks = { "◎", "○", "△", "×" };
+        private const int RATE_WEAK = 0, RATE_NORMAL = 1, RATE_RESIST = 2, RATE_NONE = 3;
+
+        private static int Cfg(ConfigEntry<int> e, int fallback) { return e != null ? e.Value : fallback; }
+
+        /// <summary>防御力 def の効き具合: 0 = ◎ よく効く (弱点)、1 = ○ 普通、2 = △ 効きにくい、3 = × ほぼ効かない / 無効。</summary>
+        private static int Rate(int def)
+        {
+            if (def >= 128) return RATE_NONE;
+            if (def <= Cfg(WeakMax, 6)) return RATE_WEAK;
+            if (def <= Cfg(NormalMax, 14)) return RATE_NORMAL;
+            if (def <= Cfg(ResistMax, 19)) return RATE_RESIST;
+            return RATE_NONE;
+        }
+
+        /// <summary>記号の色: ◎ 赤、○ 黒 (通常)、△ × 灰。center = マス用の中央寄せ。</summary>
+        private static GUIStyle RateStyle(int rate, bool center)
+        {
+            if (rate == RATE_WEAK) return center ? s_red : s_redLeft;
+            if (rate == RATE_NORMAL) return center ? s_cell : s_line;
+            return center ? s_cellDim : s_dim;
+        }
 
         private const int BTN_OK = 0x100000, BTN_CANCEL = 0x400000;
-        private const int PAGES = 4;
-        private const int PAGE_ENEMY = 0, PAGE_ENEMY_ACTS = 1, PAGE_ENEMY_GRID = 2, PAGE_OWN = 3;   // 順番はユーザー 2026-10-21 (技と見切りを 2 ページ目に)
-        private const int DIR_LEFT = 0x10000, DIR_UP = 0x20000, DIR_RIGHT = 0x40000, DIR_DOWN = 0x80000;   // 設定画面と同じ機能ビット
-        private const float REPEAT_FIRST = 0.4f, REPEAT_NEXT = 0.1f;
-        private const int GRID_COLS = 5;                   // ターン表に一度に出す列の数 (それより多い敵は左右でスクロール)
-        private static readonly int[] s_rowOff = new int[PAGES], s_colOff = new int[PAGES];   // ターン表のスクロール (ページごと)。-1 = まだ触っていない (最後のターンを出す)
-        private static int s_heldDir; private static float s_nextRepeat;
-        private const int OWN_TURNS = 8;                  // こちらの行動のページに出す最後のターン数
+        private static int PAGES { get { return EquipHints != null && EquipHints.Value ? 4 : 2; } }   // 装備のヒントの 2 ページは設定で足す (2026-10-25)
+        private const int PAGE_ENEMY = 0, PAGE_ENEMY_ACTS = 1, PAGE_WEAPONS = 2, PAGE_ARMOR = 3;   // ターン表 (敵の行動 / こちらの行動) の 2 ページはユーザー 2026-10-25 に外した (91496c6 まで)
         private static readonly string[] TypeNames = { "斬", "打", "突", "射", "熱", "冷", "雷", "状" };
-        private static readonly string[] PageTitles = { "敵の弱点と防御力", "敵の技と見切り", "敵の行動", "こちらの行動" };   // 「耐」は本体のフォントに無い (実機 2026-10-20) ので「防御力」
+        private static readonly string[] PageTitles = { "敵の弱点と防御力", "敵の技と見切り", "装備のヒント (武器と術)", "装備のヒント (防具)" };   // 「耐」は本体のフォントに無い (実機 2026-10-20) ので「防御力」
 
         // HpLoss / LpLoss は行動の前後の写し (Snapshot) の差。ソウルスティールのように LP だけ 0 にする技は結果ビットも数字も付かない
         // (set_status3 は XA1[18] = 0 にするだけ。実機 2026-10-20) ので、差分で拾う
@@ -54,6 +83,15 @@ namespace RS2QoL.Patches
         private static readonly List<int> s_learned = new List<int>();                       // この戦闘で覚えた見切り (技の番号。set_mikiri)
 
         private static int SlotIndex(int code) { int s = code & 0x7F; return (code & 0x80) == 0 ? (s < 5 ? s : -1) : (s < 10 ? 5 + s : -1); }
+
+        // 1 回の当たりから数える量。全部のページがここを通る (ページごとに別の数え方をして合計が食い違った。ユーザー 2026-10-25:
+        // 防具のページが LP の減りを 1 点 100 で足していて、射 993 が 1393 に見えた)。
+        /// <summary>HP のダメージ (本体が出した数字。結果 1 = HP)。回復や LP だけの技は 0。</summary>
+        private static int HpOf(Hit h) { return (h.Result & RES_HP) != 0 ? h.Amount : 0; }
+        /// <summary>LP の減り (行動の前後の差。結果ビットが付かない技があるので差を先に見る)。</summary>
+        private static int LpOf(Hit h) { return h.LpLoss > 0 ? h.LpLoss : ((h.Result & RES_LP) != 0 ? h.Amount : 0); }
+        /// <summary>味方の枠に向けた当たりか (敵に向けた回復などは数えない)。</summary>
+        private static bool ToParty(Hit h) { return (h.Target & 0x80) == 0 && (h.Target & 0x7F) < 5; }
 
         /// <summary>行動の始まり (exec の状態 0) に全員の HP / LP を写す。</summary>
         internal static void Snapshot(Battle b)
@@ -93,7 +131,15 @@ namespace RS2QoL.Patches
         public static void Bind(ConfigFile config)
         {
             Enabled = config.Bind("BattleReview", "Enabled", true,
-                "全滅した時 (皇帝が倒れた時も)、継承の画面に行く前に「戦闘の振り返り」の窓を出す。敵の弱点と耐性 (8 種の防御力)、敵と味方のターンごとの行動の表、敵の技と見切りの難度の 4 ページ (LB / RB で送る、決定かキャンセルで閉じる)");
+                "全滅した時 (皇帝が倒れた時も)、継承の画面に行く前に「戦闘の振り返り」の窓を出す。敵の弱点と防御力 (8 種の防御力と ◎○△× の印)、敵の技と見切りの難度の 2 ページ (LB / RB で送る、決定かキャンセルで閉じる。EquipHints で「装備のヒント」の 2 ページを足す)");
+            EquipHints = config.Bind("BattleReview", "EquipHints", false,
+                "戦闘の振り返りに「装備のヒント」の 2 ページを足す。武器と術: 敵によく効く属性ごとに、揃える武器 (または研究所で覚えられる術) と、今いくつ持っていて人数分にあと何個を今行ける店でいくらで買えるか。防具: 敵が使った属性ごとに同じ表 (どちらも誰かが装備中 / 持ち物 / 倉庫 / 今ワールドマップで行ける町の店で売っている品から)");
+            WeakMax = config.Bind("BattleReview", "WeakMax", 6,
+                "敵の属性防御力がこの値以下なら ◎ (よく効く = 弱点、赤) と見る。本体の式では防御力は「武器の威力から引く」と「最後に 5 倍を引く」の 2 か所で効き、1 世代目の武器 (威力 7〜15) で差が残るのはこの辺りまで");
+            NormalMax = config.Bind("BattleReview", "NormalMax", 14,
+                "敵の属性防御力がこの値以下 (WeakMax より上) なら ○ (普通に効く)。これより上は △ (効きにくい)");
+            ResistMax = config.Bind("BattleReview", "ResistMax", 19,
+                "敵の属性防御力がこの値以下 (NormalMax より上) なら △ (効きにくい)。これより上と「無効」は × (ほぼ効かない)。既定の 20 以上は 1 発につき 100 を削られる");
             Plugin.Log.LogInfo("[BattleReview] patched: Battle.sync (capture at 300) / exec / set_mikiri / Menu._emper_chg1 / _emper_chg2 (enabled=" + Enabled.Value + ")");
         }
 
@@ -108,6 +154,18 @@ namespace RS2QoL.Patches
             s_namesBuilt = false;
             s_learned.Clear();
             s_captured = false;
+            s_previewCaptured = false;
+            s_shopLogged = false;
+        }
+
+        /// <summary>ソフトリセット (SoftReset.RequestReset) から。窓が開いたままタイトルに戻ると出っ放しになる (実機 2026-10-25) ので閉じて記録も捨てる。</summary>
+        internal static void OnSoftReset()
+        {
+            bool was = s_open;
+            Reset();
+            s_preview = false;
+            s_guard = false;
+            if (was) Plugin.Log.LogInfo("[BattleReview] closed by soft reset");
         }
 
         private static bool s_namesBuilt;
@@ -175,8 +233,15 @@ namespace RS2QoL.Patches
         {
             if (s_failed || Enabled == null || !Enabled.Value || s_captured) return;
             if (b.procstg != 0 || b.proc[0][0] != 300 || Sys.fadeflg) return;
-            if (b.party_result != 1 && b.party_result != 2) return;
-            if (b.event_kind != 0 && (b.event_flag & 1) != 0) return;
+            bool lost = (b.party_result == 1 || b.party_result == 2) && !(b.event_kind != 0 && (b.event_flag & 1) != 0);
+            if (!lost)
+            {
+                // 負け以外は窓を出さないが、Diagnostics On なら記録だけ写しておく (プレビュー (F6) で最後の戦闘を使えるように。2026-10-25)
+                if (!Plugin.DiagOn || s_previewCaptured) return;
+                try { Capture(b, "最後の戦闘"); s_captured = false; s_previewCaptured = true; }
+                catch (Exception e) { Fail("capture", e); }
+                return;
+            }
             try { Capture(b, b.party_result == 2 ? "全滅" : "皇帝が倒れた"); }
             catch (Exception e) { Fail("capture", e); }
         }
@@ -208,6 +273,29 @@ namespace RS2QoL.Patches
         // ---------------------------------------------------------------- 開く / 閉じる
 
         private static bool s_captured;                              // 負けの戦闘の記録を持っている (継承の画面で出す)
+        private static bool s_previewCaptured;                       // この戦闘の記録をプレビュー用に写した (状態 300 は何フレームか続くので 1 回だけ)
+
+        // ---------------------------------------------------------------- プレビュー (Diagnostics On のときだけ。2026-10-25)
+        // 全滅しなくても窓を見るためのもの。F6 で最後の戦闘 (無ければ空) を使って窓を開く。「記録」の 録 は本体のフォントに無い。中身・操作は本番と同じ (F6 でも閉じる)。
+        // 文章やレイアウトの調整を「直す → 1 戦して F6」の往復で回すため (外部ファイルで文字列を変える案は 2026-10-25 にユーザーが取り下げた)。
+
+        private static bool s_preview;
+        private const KeyCode KEY_PREVIEW = KeyCode.F6;
+
+        private static bool KeyEdge(bool firstCallThisFrame, KeyCode k)
+        {
+            return firstCallThisFrame && (Input.GetKeyDown(k) || Interp60.TakeKeyDown(k));
+        }
+
+        private static void OpenPreview()
+        {
+            if (s_enemies == null) s_enemies = new List<Enemy>();
+            if (s_memberNames == null) { s_memberNames = new string[5]; for (int i = 0; i < 5; i++) s_memberNames[i] = "?"; }
+            if (!s_previewCaptured && !s_captured) s_reason = "戦闘なし";
+            Open();
+            s_preview = true;
+            Plugin.Log.LogInfo("[BattleReview] preview open (" + s_reason + ")");
+        }
         private static readonly Enemy[] s_slotEnemy = new Enemy[10];   // 敵の枠 → 種類 (窓を開く時は Work.monsterdata がもう無いので写しておく)
 
         /// <summary>戦闘の終わり (sync の状態 300 の直前。Work.monsterdata / memberdata_b がまだ生きている) に、窓に出すものを全部写す。</summary>
@@ -248,11 +336,10 @@ namespace RS2QoL.Patches
         private static void Open()
         {
             s_page = PAGE_ENEMY;
-            for (int i = 0; i < PAGES; i++) { s_rowOff[i] = -1; s_colOff[i] = 0; }
-            s_heldDir = 0;
             s_prevKey = -1;
             s_prevLB = PageBackDown(); s_prevRB = PageNextDown();
             s_open = true;
+            s_shopLogged = false;   // 開くたびに店の判定をログに (調査用)
             s_openTime = Time.realtimeSinceStartup;
             UiParts.SeOk();
             Plugin.Log.LogInfo("[BattleReview] applied: open (" + s_reason + ") at the succession screen");
@@ -263,7 +350,8 @@ namespace RS2QoL.Patches
             if (!s_open) return;
             s_open = false;
             s_guard = true;
-            s_captured = false;   // 1 回出したら捨てる (次に継承の画面が出る時に再び開かない)
+            if (!s_preview) s_captured = false;   // 1 回出したら捨てる (次に継承の画面が出る時に再び開かない)。プレビューは負けの記録を消さない
+            s_preview = false;
             UiParts.SeClose();
             Plugin.Log.LogInfo("[BattleReview] close");
         }
@@ -280,48 +368,29 @@ namespace RS2QoL.Patches
         /// <summary>Util.GetKeypadState の最終段から。開いている間は入力を奪い、決定 / キャンセル / Esc で閉じる。</summary>
         public static int Tick(int key)
         {
+            bool first = Time.frameCount != s_lastEscFrame;   // 倍速中は同じ Unity フレームで何度も呼ばれる。GetKeyDown は 1 回目だけ見る
+            s_lastEscFrame = Time.frameCount;
             if (!s_open)
             {
+                // Diagnostics On: F6 でプレビューを開く (全滅しなくても窓を見るため。設定画面が開いていれば無視)
+                if (!s_failed && Plugin.DiagOn && !ConfigMenu.IsOpen && KeyEdge(first, KEY_PREVIEW))
+                {
+                    try { OpenPreview(); } catch (Exception e) { Fail("preview", e); }
+                    return 0;
+                }
                 if (!s_guard) return key;
                 if ((key & (BTN_OK | BTN_CANCEL)) == 0) s_guard = false;
                 return 0;
             }
             int pressed = s_prevKey < 0 ? 0 : key & ~s_prevKey;
             s_prevKey = key;
-            bool escEdge = Time.frameCount != s_lastEscFrame && (Input.GetKeyDown(KeyCode.Escape) || Interp60.TakeKeyDown(KeyCode.Escape));
-            s_lastEscFrame = Time.frameCount;
+            bool escEdge = KeyEdge(first, KeyCode.Escape) || (s_preview && KeyEdge(first, KEY_PREVIEW));
             if ((pressed & (BTN_OK | BTN_CANCEL)) != 0 || escEdge) { Close(); return 0; }
             bool lb = PageBackDown(), rb = PageNextDown();
             if (lb && !s_prevLB) TurnPage(-1);
             else if (rb && !s_prevRB) TurnPage(+1);
             s_prevLB = lb; s_prevRB = rb;
-            // 十字キー / スティック: ターン表のスクロール (押した瞬間 + 長押しリピート。設定画面と同じ)
-            int dir = key & (DIR_LEFT | DIR_UP | DIR_RIGHT | DIR_DOWN);
-            float now = Time.realtimeSinceStartup;
-            if (dir == 0) s_heldDir = 0;
-            else if (dir != s_heldDir) { s_heldDir = dir; s_nextRepeat = now + REPEAT_FIRST; Scroll(dir); }
-            else if (now >= s_nextRepeat) { s_nextRepeat = now + REPEAT_NEXT; Scroll(dir); }
             return 0;
-        }
-
-        // ターン表の大きさ (描いた時に覚える。スクロールの上限に使う)
-        private static int s_gridRows, s_gridVisibleRows, s_gridCols;
-
-        private static void Scroll(int dir)
-        {
-            if (s_page != PAGE_ENEMY_GRID && s_page != PAGE_OWN) return;
-            int p = s_page;
-            int maxRow = Mathf.Max(0, s_gridRows - s_gridVisibleRows);
-            if (s_rowOff[p] < 0) s_rowOff[p] = maxRow;
-            int r = s_rowOff[p], c = s_colOff[p];
-            if ((dir & DIR_UP) != 0) r--;
-            if ((dir & DIR_DOWN) != 0) r++;
-            if ((dir & DIR_LEFT) != 0) c--;
-            if ((dir & DIR_RIGHT) != 0) c++;
-            r = Mathf.Clamp(r, 0, maxRow);
-            c = Mathf.Clamp(c, 0, Mathf.Max(0, s_gridCols - GRID_COLS));
-            if (r != s_rowOff[p] || c != s_colOff[p]) UiParts.SeCursor();
-            s_rowOff[p] = r; s_colOff[p] = c;
         }
 
         // ---------------------------------------------------------------- 名前
@@ -385,10 +454,28 @@ namespace RS2QoL.Patches
             return "難度 " + MikiriLevel(tech);
         }
 
+        /// <summary>技の攻撃属性のビット (waza_data[技*10+4]。0x80 = 斬 … 0x01 = 状。10 未満の通常攻撃も同じ表)。無ければ 0。</summary>
+        private static int TechAttr(int tech)
+        {
+            byte[] w = Data.waza_data;
+            if (w == null || tech < 0 || tech * 10 + 4 >= w.Length) return 0;
+            int a = w[tech * 10 + 4] & 0xFF;
+            return a == 255 ? 0 : a;
+        }
+
+        /// <summary>属性ビットを「斬」「熱」「斬熱」のような文字に。0 なら「－」。</summary>
+        private static string AttrText(int attr)
+        {
+            if (attr == 0) return "－";
+            StringBuilder sb = new StringBuilder();
+            for (int k = 0; k < 8; k++) if ((attr & (0x80 >> k)) != 0) sb.Append(TypeNames[k]);
+            return sb.ToString();
+        }
+
         // ---------------------------------------------------------------- 描画 (Plugin.OnGUI)
 
         private static Font s_font;
-        private static GUIStyle s_line, s_dim, s_title, s_box, s_hint, s_head, s_center, s_right, s_rightDim, s_red, s_redRight, s_cell, s_cellDim, s_cellHead;
+        private static GUIStyle s_line, s_dim, s_title, s_box, s_hint, s_head, s_center, s_right, s_rightDim, s_red, s_redRight, s_redLeft, s_redRightPlain, s_cell, s_cellDim, s_cellHead;
         private static int s_fontSizeBuilt = -1;
 
         public static void Draw()
@@ -411,21 +498,241 @@ namespace RS2QoL.Patches
             Font f = UiParts.GameFont();
             if (f != null)
                 foreach (char c in s)
-                    if (c != ' ' && !f.HasCharacter(c)) { ok = false; break; }
+                    if (c != ' ' && !f.HasCharacter(c)) { ok = false; if (Plugin.DiagOn) Plugin.Log.LogInfo("[BattleReview] game font lacks '" + c + "' (U+" + ((int)c).ToString("X4") + ") in \"" + s + "\" → OS font"); break; }
             if (s_glyphOk.Count > 4000) s_glyphOk.Clear();
             s_glyphOk[s] = ok;
             return ok;
         }
 
+        // Diagnostics On: 本体のフォントにある字を全部と、本体 / OS のフォントの寸法 (行の高さ・ベースライン・字の上下) を 1 回ログに。
+        // OS のフォントに落ちた欄だけ字が下に寄って見える (実機 2026-10-25) ので、どの字が無いか・どれだけずれるかを調べるため
+        private static bool s_fontLogged;
+
+        private static void LogFonts(int fontSize)
+        {
+            if (s_fontLogged || !Plugin.DiagOn) return;
+            s_fontLogged = true;
+            Font f = UiParts.GameFont();
+            if (f == null) { Plugin.Log.LogInfo("[BattleReview] game font: null"); return; }
+            CharacterInfo[] all = f.characterInfo;
+            List<char> chars = new List<char>();
+            if (all != null) foreach (CharacterInfo c in all) chars.Add((char)c.index);
+            chars.Sort();
+            Plugin.Log.LogInfo("[BattleReview] game font " + f.name + ": fontSize=" + f.fontSize + " lineHeight=" + f.lineHeight + " ascent=" + f.ascent + " dynamic=" + f.dynamic + " glyphs=" + chars.Count + " (drawn at " + fontSize + ")");
+            StringBuilder sb = new StringBuilder();
+            foreach (char c in chars) { sb.Append(c); if (sb.Length >= 100) { Plugin.Log.LogInfo("[BattleReview] glyphs: " + sb); sb.Length = 0; } }
+            if (sb.Length > 0) Plugin.Log.LogInfo("[BattleReview] glyphs: " + sb);
+            string probe = "0 1 , . × ◎ ○ △ ― ・ 敵 威 防 被 x ＋ － ※ ●";
+            sb.Length = 0; sb.Append("[BattleReview] game font metrics (minY..maxY advance):");
+            foreach (char c in probe) { if (c == ' ') continue; CharacterInfo ci; sb.Append(' ').Append(c).Append(f.GetCharacterInfo(c, out ci) ? "=" + ci.minY + ".." + ci.maxY + "/" + ci.advance : "=none"); }
+            Plugin.Log.LogInfo(sb.ToString());
+            if (s_font != null)
+            {
+                try
+                {
+                    s_font.RequestCharactersInTexture(probe, fontSize, FontStyle.Normal);
+                    sb.Length = 0; sb.Append("[BattleReview] OS font " + s_font.name + ": fontSize=" + s_font.fontSize + " lineHeight=" + s_font.lineHeight + " ascent=" + s_font.ascent + " metrics at " + fontSize + ":");
+                    foreach (char c in probe) { if (c == ' ') continue; CharacterInfo ci; sb.Append(' ').Append(c).Append(s_font.GetCharacterInfo(c, out ci, fontSize) ? "=" + ci.minY + ".." + ci.maxY + "/" + ci.advance : "=none"); }
+                    Plugin.Log.LogInfo(sb.ToString());
+                }
+                catch (Exception e) { Plugin.Log.LogInfo("[BattleReview] OS font metrics failed: " + e.Message); }
+            }
+        }
+
         private static void Txt(Rect r, string s, GUIStyle st)
         {
             if (string.IsNullOrEmpty(s)) return;
-            if (GameFontHas(s)) UiParts.GameLabel(r, s, st); else UiParts.Label(r, s, st);
+            if (HasMark(s)) { TxtMarks(r, s, st); return; }
+            if (GameFontHas(s)) UiParts.GameLabel(r, s, st);
+            else UiParts.Label(new Rect(r.x, r.y + s_osNudge, r.width, r.height), s, st);   // OS のフォントは字が行の中で下に寄る → 本体のフォントの字の中心に合わせる
         }
 
         private static float TextW(string s, GUIStyle st)
         {
+            if (HasMark(s)) return MarksW(s, st);
             return GameFontHas(s) ? UiParts.GameTextWidth(s, st) : st.CalcSize(new GUIContent(s)).x;
+        }
+
+        // ---------------------------------------------------------------- 記号 ◎ ○ △ × (本体のフォントに無い)
+        //
+        // 本体のフォント (UDTypos512) には ◎ ○ △ × ● のような図形の字が 1 つも無い (あるのは ※ ← ▼ ― ‥ … と英数字。実機のダンプ 2026-10-25)。
+        // 無い字が混ざった文字列は OS のフォントで描いていたが、字の上下の位置がずれて「その欄だけ下がって見える」(実機 2026-10-25)。
+        // → 4 つの記号は自前の絵 (白いテクスチャに文字の色を掛ける) で描き、前後の文字は本体のフォントで描く。
+        //   絵の中心は本体のフォントの「0」の字の中心 (行の中心から s_gameCenterOff) に置く。文字列の幅も同じ計算で測る (折り返しに使う)。
+
+        private static readonly Dictionary<char, Texture2D> s_marks = new Dictionary<char, Texture2D>();
+        private static readonly Dictionary<GUIStyle, GUIStyle> s_leftStyles = new Dictionary<GUIStyle, GUIStyle>();
+        private static float s_gameCenterOff;   // 本体のフォントで描いた字の中心が行の中心からどれだけ下か (画面の画素。負 = 上)
+        private static float s_osNudge;         // OS のフォントで描く時に矩形をどれだけ動かせば字の中心が本体の字と揃うか
+        private const int MARK_PX = 64;
+
+        private static bool IsMark(char c) { return c == '◎' || c == '○' || c == '△' || c == '×'; }
+        private static bool HasMark(string s) { foreach (char c in s) if (IsMark(c)) return true; return false; }
+
+        /// <summary>記号の送り幅 (em)。◎ ○ △ は全角、× は欧文の幅。</summary>
+        private static float MarkAdvance(char c) { return c == '×' ? 0.8f : 1f; }
+        /// <summary>記号の絵の大きさ (em)。◎ ○ △ は字の高さと同じくらい、× は小さめ。</summary>
+        private static float MarkSize(char c) { return c == '×' ? 0.5f : 0.78f; }
+
+        private static float MarksW(string s, GUIStyle st)
+        {
+            float w = 0f; int start = 0;
+            for (int i = 0; i <= s.Length; i++)
+            {
+                if (i < s.Length && !IsMark(s[i])) continue;
+                if (i > start) w += TextW(s.Substring(start, i - start), st);
+                if (i < s.Length) w += Mathf.Round(st.fontSize * MarkAdvance(s[i]));
+                start = i + 1;
+            }
+            return w;
+        }
+
+        private static GUIStyle LeftOf(GUIStyle st)
+        {
+            if (st.alignment == TextAnchor.MiddleLeft) return st;
+            GUIStyle l;
+            if (!s_leftStyles.TryGetValue(st, out l)) { l = new GUIStyle(st); l.alignment = TextAnchor.MiddleLeft; s_leftStyles[st] = l; }
+            return l;
+        }
+
+        /// <summary>記号を含む文字列: 文字の部分は本体のフォント、記号は絵で、左から並べる。st の寄せ (左 / 中央 / 右) は全体の幅で合わせる。</summary>
+        private static void TxtMarks(Rect r, string s, GUIStyle st)
+        {
+            float total = MarksW(s, st);
+            float x = r.x;
+            if (st.alignment == TextAnchor.MiddleCenter) x = r.x + Mathf.Round((r.width - total) / 2f);
+            else if (st.alignment == TextAnchor.MiddleRight) x = r.x + r.width - total;
+            GUIStyle left = LeftOf(st);
+            int start = 0;
+            for (int i = 0; i <= s.Length; i++)
+            {
+                if (i < s.Length && !IsMark(s[i])) continue;
+                if (i > start)
+                {
+                    string run = s.Substring(start, i - start);
+                    float w = TextW(run, left);
+                    Txt(new Rect(x, r.y, w + 4f, r.height), run, left);
+                    x += w;
+                }
+                if (i < s.Length) { DrawMark(s[i], x, r, st); x += Mathf.Round(st.fontSize * MarkAdvance(s[i])); }
+                start = i + 1;
+            }
+        }
+
+        private static void DrawMark(char c, float x, Rect line, GUIStyle st)
+        {
+            Texture2D t = MarkTex(c);
+            float adv = Mathf.Round(st.fontSize * MarkAdvance(c));
+            float size = Mathf.Round(st.fontSize * MarkSize(c));
+            float cx = x + adv / 2f, cy = line.y + line.height / 2f + s_gameCenterOff;
+            Rect m = new Rect(Mathf.Round(cx - size / 2f), Mathf.Round(cy - size / 2f), size, size);
+            Color old = GUI.color;
+            bool bold = st.fontStyle == FontStyle.Bold;
+            if (UiParts.Shadow)
+            {
+                float o = Mathf.Max(1f, Mathf.Round(UiParts.Unit * 0.75f));
+                GUI.color = new Color(0f, 0f, 0f, 0.8f * old.a);
+                GUI.DrawTexture(new Rect(m.x + o, m.y + o, m.width, m.height), t, ScaleMode.StretchToFill, true);
+                if (bold) GUI.DrawTexture(new Rect(m.x + o + 1f, m.y + o, m.width, m.height), t, ScaleMode.StretchToFill, true);
+            }
+            Color tc = st.normal.textColor;
+            GUI.color = new Color(tc.r, tc.g, tc.b, tc.a * old.a);
+            if (bold) GUI.DrawTexture(new Rect(m.x + 1f, m.y, m.width, m.height), t, ScaleMode.StretchToFill, true);
+            GUI.DrawTexture(m, t, ScaleMode.StretchToFill, true);
+            GUI.color = old;
+        }
+
+        /// <summary>記号の絵 (白、縁は 4×4 の点で滑らかに)。中心 (0.5, 0.5)、1 = 絵の一辺。</summary>
+        private static Texture2D MarkTex(char c)
+        {
+            Texture2D t;
+            if (s_marks.TryGetValue(c, out t) && t != null) return t;
+            t = new Texture2D(MARK_PX, MARK_PX, TextureFormat.ARGB32, false);
+            t.filterMode = FilterMode.Bilinear;
+            t.wrapMode = TextureWrapMode.Clamp;
+            t.hideFlags = HideFlags.HideAndDontSave;
+            const int SS = 4;
+            Color32[] px = new Color32[MARK_PX * MARK_PX];
+            for (int y = 0; y < MARK_PX; y++)
+                for (int x = 0; x < MARK_PX; x++)
+                {
+                    int hit = 0;
+                    for (int sy = 0; sy < SS; sy++)
+                        for (int sx = 0; sx < SS; sx++)
+                        {
+                            float u = (x + (sx + 0.5f) / SS) / MARK_PX, v = 1f - (y + (sy + 0.5f) / SS) / MARK_PX;   // v は上が 0
+                            if (MarkInside(c, u, v)) hit++;
+                        }
+                    byte a = (byte)(hit * 255 / (SS * SS));
+                    px[y * MARK_PX + x] = new Color32(255, 255, 255, a);
+                }
+            t.SetPixels32(px);
+            t.Apply();
+            s_marks[c] = t;
+            return t;
+        }
+
+        private static bool MarkInside(char c, float u, float v)
+        {
+            float dx = u - 0.5f, dy = v - 0.5f, d = Mathf.Sqrt(dx * dx + dy * dy);
+            switch (c)
+            {
+                case '○': return d <= 0.46f && d >= 0.36f;
+                case '◎': return (d <= 0.48f && d >= 0.405f) || (d <= 0.235f && d >= 0.16f);
+                case '×':
+                    {
+                        // 2 本の対角線 (太さ 0.16、端は 0.1 〜 0.9)
+                        float a = Mathf.Abs(dx - dy) / 1.41421f, b = Mathf.Abs(dx + dy) / 1.41421f;
+                        bool box = u >= 0.1f && u <= 0.9f && v >= 0.1f && v <= 0.9f;
+                        return box && (a <= 0.08f || b <= 0.08f);
+                    }
+                case '△':
+                    {
+                        // 正三角形の縁 (上の頂点 (0.5, 0.06)、底辺 v = 0.86)。内側の三角形は重心に向けて縮めたもの
+                        float top = 0.06f, bot = 0.86f, h = bot - top, half = h / 1.7320508f;   // 半分の底辺
+                        float gy = top + h * 2f / 3f;                                              // 重心の v
+                        float inr = h / 3f, k = (inr - 0.09f) / inr;                               // 内接円の半径、縮め率 (縁の太さ 0.09)
+                        return InTri(u, v, 0.5f, top, half, h) && !InTri(0.5f + (u - 0.5f) / k, gy + (v - gy) / k, 0.5f, top, half, h);
+                    }
+            }
+            return false;
+        }
+
+        /// <summary>上の頂点 (ax, ay)、底辺の半分 half、高さ h の三角形の中か。</summary>
+        private static bool InTri(float u, float v, float ax, float ay, float half, float h)
+        {
+            float t = (v - ay) / h;
+            if (t < 0f || t > 1f) return false;
+            return Mathf.Abs(u - ax) <= half * t;
+        }
+
+        /// <summary>本体のフォントと OS のフォントの、字の中心の位置 (行の中心からの差) を測る。EnsureStyles から (fontSize が変わった時)。</summary>
+        private static void MeasureCenters(int fontSize)
+        {
+            s_gameCenterOff = 0f; s_osNudge = 0f;
+            try
+            {
+                Font f = UiParts.GameFont();
+                CharacterInfo gi;
+                if (f != null && f.GetCharacterInfo('0', out gi))
+                {
+                    float sc = fontSize / (float)f.fontSize;
+                    s_gameCenterOff = (f.ascent - f.lineHeight / 2f - (gi.minY + gi.maxY) / 2f) * sc;
+                }
+                if (s_font != null)
+                {
+                    s_font.RequestCharactersInTexture("0", fontSize, FontStyle.Normal);
+                    CharacterInfo oi;
+                    if (s_font.GetCharacterInfo('0', out oi, fontSize))
+                    {
+                        float sc = s_font.fontSize > 0 ? fontSize / (float)s_font.fontSize : 1f;
+                        float osOff = (s_font.ascent * sc - s_font.lineHeight * sc / 2f) - (oi.minY + oi.maxY) / 2f;
+                        s_osNudge = Mathf.Round(s_gameCenterOff - osOff);
+                    }
+                }
+                if (Plugin.DiagOn) Plugin.Log.LogInfo("[BattleReview] text centers at " + fontSize + ": game " + s_gameCenterOff.ToString("0.00") + " px below line center, OS label nudge " + s_osNudge);
+            }
+            catch (Exception e) { Plugin.Log.LogWarning("[BattleReview] MeasureCenters: " + e.Message); }
         }
 
         // 幅に収まるように折り返して描く (右端からはみ出していた。実機 2026-10-20)。空白があればそこで、無ければ字の途中で切る。
@@ -484,6 +791,7 @@ namespace RS2QoL.Patches
             int fontSize = Mathf.Clamp(Mathf.FloorToInt(lineH / 1.45f), 11, 32);
             lineH = Mathf.Min(lineH, fontSize * 1.6f);
             EnsureStyles(fontSize);
+            LogFonts(fontSize);
             float pad = lineH * 0.6f;
             float headH = Mathf.Round(lineH * 1.4f);
             float footH = lineH;
@@ -528,13 +836,11 @@ namespace RS2QoL.Patches
             {
                 case PAGE_ENEMY: DrawEnemyPage(cx, cy, cw, lineH, fontSize, bodyBottom); break;
                 case PAGE_ENEMY_ACTS: DrawEnemyActsPage(cx, cy, cw, lineH, fontSize, bodyBottom); break;
-                case PAGE_ENEMY_GRID: DrawGrid(true, cx, cy, cw, lineH, fontSize, bodyBottom); break;
-                default: DrawGrid(false, cx, cy, cw, lineH, fontSize, bodyBottom); break;
+                case PAGE_WEAPONS: DrawWeaponTablePage(cx, cy, cw, lineH, fontSize, bodyBottom); break;
+                case PAGE_ARMOR: DrawArmorTablePage(cx, cy, cw, lineH, fontSize, bodyBottom); break;
             }
 
-            string foot = (s_page == PAGE_ENEMY_GRID || s_page == PAGE_OWN)
-                ? "十字キー: スクロール   LB / RB: ページ   決定・キャンセル・Esc: 閉じて継承へ"
-                : "LB / RB: ページ   決定・キャンセル・Esc: 閉じて継承へ";
+            string foot = "LB / RB: ページ   決定・キャンセル・Esc: 閉じて継承へ";
             Txt(new Rect(cx, y + h - pad - footH, cw, footH), foot, s_hint);
         }
 
@@ -562,14 +868,13 @@ namespace RS2QoL.Patches
                 string name = e.Count > 1 ? e.Name + " ×" + e.Count : e.Name;
                 Txt(new Rect(cx, cy, nameW, lineH), name, s_line);
                 Txt(new Rect(hpX, cy, hpW, lineH), e.Hp + " / " + e.HpMax, e.Hp * 4 <= e.HpMax ? s_redRight : s_right);
-                int min = 255;
-                for (int k = 0; k < 8; k++) if (e.Def[k] < 128 && e.Def[k] < min) min = e.Def[k];
+                // 数字 (防御力) を残すのはこのページだけ。記号と色は絶対値の 4 段階 (前は「その敵の中で一番低い値」を赤にしていて、全属性 20 の敵にも赤が付いた。ユーザー 2026-10-25)
                 for (int k = 0; k < 8; k++)
                 {
                     int v = e.Def[k];
                     Rect r = new Rect(defX + cellW * k, cy, cellW, lineH);
                     if (v >= 128) Txt(r, "無効", s_cellDim);
-                    else Txt(r, v.ToString(), v == min ? s_red : s_cell);
+                    else { int rate = Rate(v); Txt(r, RateMarks[rate] + v, RateStyle(rate, true)); }
                 }
                 cy += lineH;
             }
@@ -577,8 +882,8 @@ namespace RS2QoL.Patches
             // 説明: 表の下に 1 行空け、文ごとに 1 行 (長ければ折り返す)、1 行空けて属性の説明 (ユーザー 2026-10-21: 改行の位置と余白)
             float hintH = Mathf.Round(lineH * 0.9f);
             cy += hintH;
-            cy = DrawWrapped(cx, cy, cw, hintH, "数字が小さいほどその属性のダメージが通る (赤 = その敵の弱点)。", s_hint, bottom);
-            cy = DrawWrapped(cx, cy, cw, hintH, "「無効」はその属性のダメージを受けない。", s_hint, bottom);
+            cy = DrawWrapped(cx, cy, cw, hintH, "数字 = 防御力 (小さいほどその属性のダメージが通る)。「無効」はその属性のダメージを受けない。", s_hint, bottom);
+            cy = DrawWrapped(cx, cy, cw, hintH, "◎ よく効く (弱点)  ○ 普通に効く  △ 効きにくい  × ほぼ効かない", s_hint, bottom);
             cy += hintH;
             // 属性の説明は 2 列 × 3 行 (ユーザー 2026-10-21: 1 項目 1 行で見やすく)
             string[] attrNotes = { "斬 = 剣・大剣・斧など", "射 = 弓", "打 = 棍棒・体術", "熱 / 冷 / 雷 = 術と属性武器", "突 = 槍・小剣", "状 = 状態異常" };
@@ -615,15 +920,17 @@ namespace RS2QoL.Patches
         /// <summary>敵が使った技のページ: 敵ごとに、技 / 回数 / 合計ダメージ / 最大 / 誰にいくら / 見切り。</summary>
         private static void DrawEnemyActsPage(float cx, float cy, float cw, float lineH, int fontSize, float bottom)
         {
-            float colCnt = Mathf.Round(fontSize * 3.2f), colSum = Mathf.Round(fontSize * 4.5f), colMax = Mathf.Round(fontSize * 4f), colMik = Mathf.Round(fontSize * 5f);
-            float rightPad = Mathf.Round(fontSize * 6f);   // 4 列を全体に左へ (ユーザー 2026-10-20 → 21: もっと左に)
-            float mikX = cx + cw - rightPad - colMik, maxX = mikX - colMax, sumX = maxX - colSum, cntX = sumX - colCnt;
-            float nameW = cntX - cx - fontSize * 0.5f;
+            // 列の並び: 技 / 属性 / 見切り / 回数 / 合計 / 最大 (ユーザー 2026-10-25: 属性を回数の左に、その右に見切り)
+            float colCnt = Mathf.Round(fontSize * 3.2f), colSum = Mathf.Round(fontSize * 4.5f), colMax = Mathf.Round(fontSize * 4f), colMik = Mathf.Round(fontSize * 5f), colAttr = Mathf.Round(fontSize * 3.2f);
+            float rightPad = Mathf.Round(fontSize * 4f);   // 列全体を少し左へ (ユーザー 2026-10-20 → 21: もっと左に)
+            float maxX = cx + cw - rightPad - colMax, sumX = maxX - colSum, cntX = sumX - colCnt, mikX = cntX - colMik, attrX = mikX - colAttr;
+            float nameW = attrX - cx - fontSize * 0.5f;
             Txt(new Rect(cx, cy, nameW, lineH), "技 (使った敵)", s_dim);
+            Txt(new Rect(attrX, cy, colAttr, lineH), "属性", s_rightDim);
+            Txt(new Rect(mikX, cy, colMik, lineH), "見切り", s_rightDim);
             Txt(new Rect(cntX, cy, colCnt, lineH), "回数", s_rightDim);
             Txt(new Rect(sumX, cy, colSum, lineH), "合計", s_rightDim);
             Txt(new Rect(maxX, cy, colMax, lineH), "最大", s_rightDim);
-            Txt(new Rect(mikX, cy, colMik, lineH), "見切り", s_rightDim);
             cy += lineH;
             bool any = false;
             foreach (Enemy e in s_enemies)
@@ -641,12 +948,9 @@ namespace RS2QoL.Patches
                     u.Count++;
                     foreach (Hit hit in a.Hits)
                     {
-                        if ((hit.Target & 0x80) != 0) continue;           // 敵に向けた行動 (回復など) は数えない
+                        if (!ToParty(hit)) continue;           // 敵に向けた行動 (回復など) は数えない
                         int t = hit.Target & 0x7F;
-                        if (t >= 5) continue;
-                        // HP のダメージは本体が出した数字 (結果 1 = HP)。LP は前後の差 (結果ビットが付かない技があるため)
-                        int dmg = (hit.Result & RES_HP) != 0 ? hit.Amount : 0;
-                        int lp = hit.LpLoss > 0 ? hit.LpLoss : ((hit.Result & RES_LP) != 0 ? hit.Amount : 0);
+                        int dmg = HpOf(hit), lp = LpOf(hit);   // 防具のページ (UsedAttrs) と同じ数え方
                         u.Total += dmg;
                         if (dmg > u.Max) u.Max = dmg;
                         u.PerMember[t] += dmg;
@@ -676,7 +980,8 @@ namespace RS2QoL.Patches
                     else Txt(new Rect(sumX, cy, colSum, lineH), "－", s_right);
                     Txt(new Rect(maxX, cy, colMax, lineH), u.Max > 0 ? u.Max.ToString() : "－", u.Max >= 200 ? s_redRight : s_right);
                     string mik = s_learned.Contains(u.Tech) ? "覚えた！" : MikiriText(u.Tech);
-                    Txt(new Rect(mikX, cy, colMik, lineH), mik, mik.StartsWith("難度") || mik.StartsWith("覚") ? s_redRight : s_rightDim);
+                    Txt(new Rect(mikX, cy, colMik, lineH), mik, mik.StartsWith("難度") || mik.StartsWith("覚") ? s_redRightPlain : s_rightDim);   // 太字にしない (本体のフォントの太字は 1 画素ずらして 2 回描くので文字が読みにくい。ユーザー 2026-10-25)
+                    Txt(new Rect(attrX, cy, colAttr, lineH), AttrText(TechAttr(u.Tech)), s_right);
                     cy += lineH;
                     // 「誰にいくら」の薄い行は出さない (ユーザー 2026-10-20: 要らない。ターン表の方にある)
                 }
@@ -686,159 +991,669 @@ namespace RS2QoL.Patches
             if (!any && s_enemies.Count == 0) Txt(new Rect(cx, cy, cw, lineH), "敵の記録がありません", s_dim);
         }
 
-        // ---------------------------------------------------------------- ターン表 (敵の行動 / こちらの行動)
+        // ---------------------------------------------------------------- 装備のヒント ([BattleReview] EquipHints、既定 Off。2026-10-25)
+        //
+        // 部位: 本体の装備画面 (Menu.equip_work_make / make_bougu_name) は item_menu_data[id*5+2] のビットで部位の重なりを見る
+        //   (1 = 頭、2 = 体、4 = 腕、8 = 足、16 = 服、0 = 装飾 (重ならない)、15 = 全身 (頭体腕足を占める)、32 = 盾、0x80 = 外せない)。
+        //   盾は armor_data を持たない (回避の判定) のでここでは出さない。
+        // 店: 本体は店ごとの品物表を持たない。店 (Data.shop_data の 32 店 × 4 分類) は分類 (192..223) を並べるだけで、分類ごとの
+        //   段階 (partydata[97 + 分類/2] の 4 ビット。偶数は上位、奇数は下位 = Core.get_flag_atai) が Data.shop_item[(分類-192)*8 + 段階] の
+        //   品を決める。開発所の開発は店に品を足すのではなく分類の段階を上げる (msg 2916 / 2915)。
+        //   「今買える」= 今行ける町 (ShopPlaces の表で判定) の店が並べている分類の、今の段階の品。
+        // 装備中: memberdata[81..83] (84 は仲間の作り込みの防具で外せないので候補にしない)。
 
-        private sealed class GridCol { public int Actor; public string Name; }
+        private const string SRC_EQUIP = "装", SRC_HELD = "持", SRC_STORED = "倉", SRC_SHOP = "店";
+        private static readonly string[] PartNames = { "頭", "体", "腕", "足", "服", "装飾", "全身" };
+        private const int PARTS = 7;
 
-        /// <summary>ターン表の列: 味方は戦闘の枠 0..4 (名前のある人)、敵はその戦闘で行動した枠 (同じ種類が複数なら名前に番号)。</summary>
-        private static List<GridCol> GridColumns(bool enemy)
+        private sealed class AttrCol { public int Index, Damage, Lp; public List<string> Enemies = new List<string>(), Techs = new List<string>(); }
+        // InShop = 今行ける店で売っている (持っていても立つ。候補を 1 品 1 つにまとめる時に「店でも買える」が消えて、
+        // 持ち物にあるメイスが「店に無い」と出た。実機 2026-10-25)
+        private sealed class ArmorCand { public int Id, Part; public string Src; public bool InShop; }
+
+        /// <summary>防具の部位 (PartNames の添字)。防具 (96..191) 以外は -1。</summary>
+        private static int ArmorPart(int id)
         {
-            List<GridCol> cols = new List<GridCol>();
-            if (!enemy)
+            if (id < 96 || id >= 192 || Data.item_menu_data == null || id * 5 + 2 >= Data.item_menu_data.Length) return -1;
+            int bits = Data.item_menu_data[id * 5 + 2] & 0x7F;
+            if ((bits & 15) == 15) return 6;
+            switch (bits)
             {
-                for (int i = 0; i < 5; i++) if (s_memberNames[i] != "?") cols.Add(new GridCol { Actor = i, Name = s_memberNames[i] });
-                if (cols.Count == 0) for (int i = 0; i < 5; i++) cols.Add(new GridCol { Actor = i, Name = s_memberNames[i] });
-                return cols;
+                case 1: return 0;
+                case 2: return 1;
+                case 4: return 2;
+                case 8: return 3;
+                case 16: return 4;
+                case 0: return 5;
             }
-            for (int s = 0; s < 10; s++)
+            return -1;
+        }
+
+        private static int ArmorDef(int id, int k)
+        {
+            int a = (id - 96) * 12 + k;
+            return (Data.armor_data != null && a < Data.armor_data.Length) ? Data.armor_data[a] & 0xFF : 0;
+        }
+
+        /// <summary>
+        /// この戦闘で敵が味方に使った技の属性 (HP のダメージの多い順、同じなら LP の減りの多い順)。属性が複数ある技はそれぞれに数える。
+        /// Damage は 2 ページ目の「合計」と同じ数え方 (HpOf。LP は Lp に別に持つ) なので、ページをまたいで同じ数字になる。
+        /// </summary>
+        private static List<AttrCol> UsedAttrs()
+        {
+            List<AttrCol> cols = new List<AttrCol>();
+            foreach (Act a in s_acts)
             {
-                bool acted = false;
-                foreach (Act a in s_acts) if ((a.Actor & 0x80) != 0 && (a.Actor & 0x7F) == s) { acted = true; break; }
-                if (!acted) continue;
-                cols.Add(new GridCol { Actor = 0x80 | s, Name = ActorName(0x80 | s) });
+                if ((a.Actor & 0x80) == 0) continue;
+                int attr = TechAttr(a.Tech);
+                if (attr == 0) continue;
+                int dmg = 0, lp = 0;
+                foreach (Hit h in a.Hits)
+                {
+                    if (!ToParty(h)) continue;
+                    dmg += HpOf(h);
+                    lp += LpOf(h);
+                }
+                for (int k = 0; k < 8; k++)
+                {
+                    if ((attr & (0x80 >> k)) == 0) continue;
+                    AttrCol c = null;
+                    foreach (AttrCol x in cols) if (x.Index == k) { c = x; break; }
+                    if (c == null) { c = new AttrCol { Index = k }; cols.Add(c); }
+                    c.Damage += dmg;
+                    c.Lp += lp;
+                    string en = ActorName(a.Actor);
+                    if (!c.Enemies.Contains(en)) c.Enemies.Add(en);
+                    string tn = TechName(a.Tech, a.Weapon, true);
+                    if (!c.Techs.Contains(tn)) c.Techs.Add(tn);
+                }
             }
-            // 同じ名前が複数なら 1, 2, ... を付ける
-            for (int i = 0; i < cols.Count; i++)
-            {
-                int same = 0, idx = 0;
-                for (int j = 0; j < cols.Count; j++) if (cols[j].Name == cols[i].Name) { same++; if (j < i) idx++; }
-                if (same > 1) cols[i].Name = cols[i].Name + " " + (idx + 1);
-            }
+            cols.Sort((p, q) => p.Damage != q.Damage ? q.Damage.CompareTo(p.Damage) : q.Lp.CompareTo(p.Lp));
             return cols;
         }
 
-        /// <summary>
-        /// ターン表: 行 = ターン (上下でスクロール)、列 = 行動した人 (GRID_COLS より多ければ左右でスクロール)。
-        /// マスは「技の名前 / 結果」。結果は与えたダメージ (相手が 1 人なら「名前 数字」、複数なら「合計 (N 人)」。味方の表は数字だけ)、
-        /// 回復は +N、LP だけ削ったら LP −N、当たらなければ 盾 / 見切り / 外れ、相手を倒したら †。
-        /// 味方の表では、そのターンに戦闘不能になった人のマスを赤の † にする。行動していない人は －。
-        /// </summary>
-        private static void DrawGrid(bool enemy, float cx, float cy, float cw, float lineH, int fontSize, float bottom)
+        /// <summary>表に出す「受けた量」: 被993。HP のダメージが無ければ技の名前 (影ぬい など)。LP の減りは出さない (ユーザー 2026-10-25)。</summary>
+        private static string TakenText(AttrCol a, bool withTechs)
         {
-            int page = enemy ? PAGE_ENEMY_GRID : PAGE_OWN;
-            List<GridCol> cols = GridColumns(enemy);
-            float turnW = Mathf.Round(fontSize * 3.2f);
-            float rowH = Mathf.Round(lineH * 1.85f);
-            int visibleRows = Mathf.Max(1, Mathf.FloorToInt((bottom - cy - lineH) / rowH));
-            s_gridRows = s_turns; s_gridVisibleRows = visibleRows; s_gridCols = cols.Count;
-            int maxRow = Mathf.Max(0, s_turns - visibleRows);
-            if (s_rowOff[page] < 0 || s_rowOff[page] > maxRow) s_rowOff[page] = maxRow;   // 最初は最後のターンが見える位置
-            int colOff = Mathf.Clamp(s_colOff[page], 0, Mathf.Max(0, cols.Count - GRID_COLS));
-            s_colOff[page] = colOff;
-            int shown = Mathf.Min(GRID_COLS, cols.Count);
-            float colW = shown > 0 ? Mathf.Floor((cw - turnW) / shown) : cw - turnW;
+            if (a.Damage > 0) return "被" + Num(a.Damage);
+            return withTechs && a.Techs.Count > 0 ? string.Join("・", a.Techs.ToArray()) : "被0";
+        }
 
-            // 列の見出し。左右にまだ列があれば ◀ ▶ をターンの欄に
-            string turnHead = "ターン";
-            if (colOff > 0) turnHead = "◀ " + turnHead;
-            if (colOff + shown < cols.Count) turnHead = turnHead + " ▶";
-            Txt(new Rect(cx, cy, turnW, lineH), turnHead, s_dim);
-            for (int c = 0; c < shown; c++) Txt(new Rect(cx + turnW + colW * c, cy, colW, lineH), cols[colOff + c].Name, s_cellHead);
-            cy += lineH;
-            if (s_turns <= 0 || cols.Count == 0) { Txt(new Rect(cx, cy, cw, lineH), "行動の記録がありません", s_dim); return; }
+        /// <summary>本体の旗 (Core.get_flag_atai と同じ: partydata[97 + N/2] の 4 ビット。偶数は上位、奇数は下位)。</summary>
+        private static int Flag(int n)
+        {
+            int[] pd = Work.partydata;
+            int i = 97 + n / 2;
+            if (pd == null || i >= pd.Length) return 0;
+            return (n & 1) != 0 ? pd[i] & 0xF : (pd[i] >> 4) & 0xF;
+        }
 
-            int first = s_rowOff[page] + 1, last = Mathf.Min(s_turns, first + visibleRows - 1);
-            for (int turn = first; turn <= last; turn++)
+        // 店 → 町の対応 (script の shop_rout の呼び出し元 NPC と、その町のワールドマップの行き先。2026-10-25 に decompiled と
+        // tools/script-analysis/out/ops.txt・maps.txt から起こした)。店は 0..15 だけ使われている (16..31 は呼ばれない)。
+        // 「今行ける」= 地方の旗 (get_flag_atai(4 + 地方/4) の bit 地方%4) と町の旗 ([Flag] & [Mask]) が立っていて、
+        // 店主の NPC が出ている (maps.txt の fN=lo..hi) こと。Core.select_chiikimap / area_name_tbl / world_icon_tbl と同じ判定。
+        private sealed class ShopPlace { public int Shop, Region, Flag, Mask, NpcFlag, NpcLo, NpcHi; public string Town; }
+        private static readonly ShopPlace[] ShopPlaces =
+        {
+            new ShopPlace { Shop = 0,  Town = "アバロン",   Region = 0,  Flag = 8,  Mask = 1, NpcFlag = 128, NpcLo = 0, NpcHi = 0 },
+            new ShopPlace { Shop = 1,  Town = "ソーモン",   Region = 0,  Flag = 8,  Mask = 2 },
+            new ShopPlace { Shop = 2,  Town = "ニーベル",   Region = 1,  Flag = 10, Mask = 1 },
+            new ShopPlace { Shop = 3,  Town = "ダグラス",   Region = 6,  Flag = 20, Mask = 1 },
+            new ShopPlace { Shop = 4,  Town = "フォーファー", Region = 6, Flag = 20, Mask = 4 },
+            new ShopPlace { Shop = 5,  Town = "ティファール", Region = 2, Flag = 16, Mask = 1 },           // flag156 == 0 だと店が開かない (下で見る)
+            new ShopPlace { Shop = 6,  Town = "アバロン",   Region = 0,  Flag = 8,  Mask = 1, NpcFlag = 128, NpcLo = 0, NpcHi = 0 },   // flag190 10..14 は別の話になる
+            new ShopPlace { Shop = 7,  Town = "モーベルム", Region = 4,  Flag = 12, Mask = 2 },
+            new ShopPlace { Shop = 8,  Town = "モーベルム", Region = 4,  Flag = 12, Mask = 2 },
+            new ShopPlace { Shop = 9,  Town = "ミラマー",   Region = 1,  Flag = 11, Mask = 1 },           // 地方 4 の 13&2 からも行ける (下で見る)
+            new ShopPlace { Shop = 10, Town = "マイルズ",   Region = 7,  Flag = 22, Mask = 2 },
+            new ShopPlace { Shop = 11, Town = "テレルテバ", Region = 8,  Flag = 24, Mask = 4 },
+            new ShopPlace { Shop = 12, Town = "ユウヤン",   Region = 11, Flag = 30, Mask = 1, NpcFlag = 35,  NpcLo = 0, NpcHi = 3 },
+            new ShopPlace { Shop = 13, Town = "リャンシャン", Region = 11, Flag = 30, Mask = 2, NpcFlag = 35, NpcLo = 0, NpcHi = 1 },
+            new ShopPlace { Shop = 14, Town = "ツキジマ",   Region = 12, Flag = 32, Mask = 1, NpcFlag = 173, NpcLo = 0, NpcHi = 13 },
+            new ShopPlace { Shop = 15, Town = "ツキジマ",   Region = 12, Flag = 32, Mask = 1, NpcFlag = 173, NpcLo = 0, NpcHi = 13 },
+        };
+
+        private static bool RegionOpen(int region) { return (Flag(4 + region / 4) & (1 << (region % 4))) != 0; }
+
+        /// <summary>その店の町に今ワールドマップで行けて、店主が出ているか。</summary>
+        private static bool ShopReachable(ShopPlace p)
+        {
+            bool dest = RegionOpen(p.Region) && (Flag(p.Flag) & p.Mask) != 0;
+            if (p.Shop == 9 && !dest) dest = RegionOpen(4) && (Flag(13) & 2) != 0;   // ミラマーは地方 4 からも
+            if (!dest) return false;
+            if (p.NpcFlag != 0 || p.NpcHi != 0) { int v = Flag(p.NpcFlag); if (v < p.NpcLo || v > p.NpcHi) return false; }
+            if (p.Shop == 5 && Flag(156) == 0) return false;
+            if (p.Shop == 6) { int v = Flag(190); if (v >= 10 && v <= 14) return false; }
+            return true;
+        }
+
+        private static bool s_shopLogged;
+
+        /// <summary>今行ける町の店で買える品物 (店の分類の今の段階の品)。</summary>
+        private static List<int> ShopItemsNow()
+        {
+            List<int> list = new List<int>();
+            byte[] sd = Data.shop_data, si = Data.shop_item;
+            if (sd == null || si == null || Work.partydata == null) return list;
+            StringBuilder log = s_shopLogged ? null : new StringBuilder();
+            if (log != null)
             {
-                if (cy + rowH > bottom) break;
-                // ターンの番号。上下にまだターンがあれば先頭 / 末尾の行に ▲ ▼
-                string tn = turn.ToString();
-                if (turn == first && first > 1) tn = "▲ " + tn;
-                else if (turn == last && last < s_turns) tn = "▼ " + tn;
-                Txt(new Rect(cx, cy, turnW, rowH), tn, s_center);
-                for (int c = 0; c < shown; c++)
+                // 店ごとの判定の内訳 (調査用。ユーザー 2026-10-25: 店で売っているメイスが「店に無い」と出た)
+                StringBuilder d = new StringBuilder("[BattleReview] shops:");
+                foreach (ShopPlace p in ShopPlaces)
+                    d.Append(' ').Append(p.Shop).Append(ShopReachable(p) ? "+" : "-").Append(p.Town)
+                     .Append("(R").Append(p.Region).Append(RegionOpen(p.Region) ? "+" : "-").Append(" f").Append(p.Flag).Append('=').Append(Flag(p.Flag)).Append('&').Append(p.Mask)
+                     .Append(p.NpcFlag != 0 || p.NpcHi != 0 ? " n" + p.NpcFlag + "=" + Flag(p.NpcFlag) : "").Append(')');
+                d.Append(" f128=").Append(Flag(128)).Append(" f156=").Append(Flag(156)).Append(" f190=").Append(Flag(190)).Append(" tiers192..223=");
+                for (int c = 192; c <= 223; c++) d.Append(Flag(c).ToString("X"));
+                Plugin.Log.LogInfo(d.ToString());
+            }
+            foreach (ShopPlace p in ShopPlaces)
+            {
+                if (!ShopReachable(p)) continue;
+                if (log != null) log.Append(' ').Append(p.Shop).Append('=').Append(p.Town);
+                for (int i = 0; i < 4; i++)
                 {
-                    GridCol col = cols[colOff + c];
-                    string top = "", num = "";
-                    bool ko = false, red = false, dim = false, weak = false;
-                    foreach (Act a in s_acts)
-                    {
-                        if (a.Turn != turn) continue;
-                        // 味方の表: この人が戦闘不能になったターンか (誰の行動でも、対象がこの人で結果に 8。LP が 0 になった時も)
-                        if (!enemy)
-                            foreach (Hit hit in a.Hits)
-                                if ((hit.Target & 0x80) == 0 && (hit.Target & 0x7F) == col.Actor && ((hit.Result & RES_KO) != 0 || (hit.LpLoss > 0 && hit.LpAfter == 0))) ko = true;
-                        if (a.Actor != col.Actor) continue;
-                        top = TechName(a.Tech, a.Weapon, false);
-                        int dmg = 0, heal = 0, lp = 0, targets = 0; bool hitAny = false, killed = false; string why = null, oneTarget = null;
-                        foreach (Hit hit in a.Hits)
-                        {
-                            targets++;
-                            oneTarget = ActorName(hit.Target);
-                            if ((hit.Result & RES_HEAL) != 0) { heal += hit.Amount; hitAny = true; continue; }
-                            int d = (hit.Result & RES_HP) != 0 ? hit.Amount : 0;
-                            dmg += d; if (d > 0) hitAny = true;
-                            if (!enemy && d > 0 && HitsWeakness(a.Tech, hit.Target)) weak = true;
-                            int l = hit.LpLoss > 0 ? hit.LpLoss : ((hit.Result & RES_LP) != 0 ? hit.Amount : 0);
-                            if (l > 0) { lp += l; hitAny = true; }
-                            if ((hit.Result & RES_KO) != 0 || (l > 0 && hit.LpAfter == 0)) killed = true;
-                            if (d == 0 && l == 0 && why == null) why = Outcome(hit);   // 盾 / 見切り / 外れ (最初の 1 つ)
-                        }
-                        if (dmg > 0) num = dmg.ToString();
-                        else if (heal > 0) num = "+" + heal;
-                        else if (lp > 0) { num = "LP −" + lp; red = true; }
-                        else if (why != null) { num = why; dim = true; }
-                        else if (hitAny || targets > 0) num = "0";
-                        // 相手の名前も (1 人ならその名前、複数なら人数)。敵の表も味方の表も同じ書き方 (ユーザー 2026-10-20)
-                        if (targets > 0 && num.Length > 0)
-                            num = targets == 1 ? oneTarget + " " + num : num + " (" + targets + "人)";
-                        if (killed && num.Length > 0) num += " †";
-                        if (weak) red = true;   // 弱点をついた (味方の表)
-                    }
-                    Rect r = new Rect(cx + turnW + colW * c, cy, colW, rowH);
-                    Rect topR = new Rect(r.x, r.y, r.width, lineH * 0.9f), botR = new Rect(r.x, r.y + lineH * 0.85f, r.width, lineH * 0.9f);
-                    GUIStyle numStyle = red ? s_red : (dim ? s_cellDim : s_cell);
-                    if (ko)
-                    {
-                        // 戦闘不能になったターン: 赤いのは右端の † だけ。技や数字の色は弱点などの意味のまま (ユーザー 2026-10-20: 死の赤が他の内容に紐づくのはやめる)
-                        float markW = Mathf.Round(fontSize * 1.3f);
-                        if (top.Length == 0 && num.Length == 0) { Txt(botR, "†", s_red); continue; }
-                        Txt(topR, top, s_cell);
-                        Txt(new Rect(botR.x, botR.y, botR.width - markW, botR.height), num, numStyle);
-                        Txt(new Rect(botR.x + botR.width - markW, botR.y, markW, botR.height), "†", s_red);
-                        continue;
-                    }
-                    if (top.Length == 0) { Txt(new Rect(r.x, r.y, r.width, rowH), "－", s_cellDim); continue; }   // 行動なし (戦闘不能・石化など)
-                    Txt(topR, top, s_cell);
-                    Txt(botR, num, numStyle);
+                    int at0 = p.Shop * 4 + i;
+                    if (at0 >= sd.Length) break;
+                    int code = sd[at0] & 0xFF;
+                    if (code < 192 || code > 223) continue;
+                    int tier = Flag(code);
+                    int at = (code - 192) * 8 + (tier & 7);
+                    if (at >= si.Length) continue;
+                    int item = si[at] & 0xFF;
+                    if (item < 255 && !list.Contains(item)) list.Add(item);
                 }
-                cy += rowH;
+            }
+            if (log != null)
+            {
+                s_shopLogged = true;
+                StringBuilder names = new StringBuilder();
+                foreach (int id in list) names.Append(' ').Append(ItemStorage.Name(id));
+                Plugin.Log.LogInfo("[BattleReview] reachable shops:" + log + " items=" + list.Count + " map=" + (Work.partydata[0] & 0xFFF) + " |" + names);
+            }
+            return list;
+        }
+
+        /// <summary>手に入る防具の候補: 誰かが装備中 / 持ち物 / 倉庫 / 今買える店。同じ品物は 1 つ (出どころは最初に見つけた順 = 装 > 持 > 倉 > 店)。</summary>
+        private static List<ArmorCand> ArmorCandidates()
+        {
+            List<ArmorCand> list = new List<ArmorCand>();
+            Dictionary<int, ArmorCand> seen = new Dictionary<int, ArmorCand>();
+            Action<int, string> add = (id, src) =>
+            {
+                ArmorCand old;
+                if (seen.TryGetValue(id, out old)) { if (src == SRC_SHOP) old.InShop = true; return; }
+                int part = ArmorPart(id);
+                if (part < 0) return;
+                ArmorCand c = new ArmorCand { Id = id, Part = part, Src = src, InShop = src == SRC_SHOP };
+                seen[id] = c;
+                list.Add(c);
+            };
+            if (Work.memberdata != null)
+            {
+                int n = PartyWeight.Count();
+                for (int m = 0; m < n && m < Work.memberdata.Length; m++)
+                {
+                    int[] md = Work.memberdata[m];
+                    if (md == null || md.Length < 84) continue;
+                    for (int s = 81; s <= 83; s++) if (md[s] != 255) add(md[s], SRC_EQUIP);
+                }
+            }
+            foreach (ItemStorage.Entry e in ItemStorage.HeldList()) add(e.Id, SRC_HELD);
+            foreach (ItemStorage.Entry e in ItemStorage.StoredList()) add(e.Id, SRC_STORED);
+            foreach (int id in ShopItemsNow()) add(id, SRC_SHOP);
+            return list;
+        }
+
+        // ---------------------------------------------------------------- 装備のヒント (武器)。2026-10-25
+        //
+        // 通常攻撃の属性: Battle.set_basic_At が武器の系統 (weapon_data[id*4+1] の上位 4 ビット) で技 0..9 を 1 つ決め、その属性は
+        //   waza_data[技*10+4] だけで決まる (武器が属性を足すことはない。炎の剣などは weapon_data[+2]/[+3] で別の技を増やすだけ)。
+        //   系統 → 技: 0x10 剣 → 0、0x80 大剣 / 0xB0 剣大剣 → 1、0x40 斧 → 2、0x50 棍棒 → 3、0x90 槍 / 0xC0 槍斧 / 0xD0 大剣槍 → 4、
+        //   0x20 小剣 / 0x30 剣小剣 → 5、0xA0 弓 → 6、0xE0 爪 → 7。それ以外 (傷薬など) は武器ではない。
+        //   表の中身 (斬 斬 打 打 突 突 射 斬) は実行時に waza_data から読む (決め打ちしない)。
+        // 技能 (Skills のビット): 1 剣、2 小剣、4 斧、8 棍棒、16 大剣、32 槍、64 弓、128 爪 (今は表示に使っていない。ユーザー 2026-10-25: 種類ではなく属性で)。
+
+        private sealed class WeaponCand { public int Id, Power, Skills, Attr; public string Src; public bool InShop; }   // InShop は ArmorCand と同じ
+
+        /// <summary>武器の系統 (上位 4 ビット) → 通常攻撃の技 0..9。武器でなければ -1。</summary>
+        private static int PlainTech(int kind)
+        {
+            switch (kind & 0xF0)
+            {
+                case 0x10: return 0;
+                case 0x80: case 0xB0: return 1;
+                case 0x40: return 2;
+                case 0x50: return 3;
+                case 0x90: case 0xC0: case 0xD0: return 4;
+                case 0x20: case 0x30: return 5;
+                case 0xA0: return 6;
+                case 0xE0: return 7;
+            }
+            return -1;
+        }
+
+        private static int SkillsOf(int kind)
+        {
+            switch (kind & 0xF0)
+            {
+                case 0x10: return 1;
+                case 0x20: return 2;
+                case 0x30: return 1 | 2;
+                case 0x40: return 4;
+                case 0x50: return 8;
+                case 0x80: return 16;
+                case 0x90: return 32;
+                case 0xA0: return 64;
+                case 0xB0: return 1 | 16;
+                case 0xC0: return 32 | 4;
+                case 0xD0: return 16 | 32;
+                case 0xE0: return 128;
+            }
+            return 0;
+        }
+
+        private static WeaponCand MakeWeapon(int id, string src)
+        {
+            byte[] wd = Data.weapon_data;
+            if (id < 0 || id >= 96 || wd == null || id * 4 + 1 >= wd.Length) return null;
+            int kind = wd[id * 4 + 1] & 0xFF;
+            int tech = PlainTech(kind);
+            if (tech < 0) return null;
+            return new WeaponCand { Id = id, Power = wd[id * 4] & 0xFF, Skills = SkillsOf(kind), Attr = TechAttr(tech), Src = src };
+        }
+
+        /// <summary>手に入る武器の候補 (装備中 / 持ち物 / 倉庫 / 今買える店。同じ品物は 1 つ)。</summary>
+        private static List<WeaponCand> WeaponCandidates()
+        {
+            List<WeaponCand> list = new List<WeaponCand>();
+            Dictionary<int, WeaponCand> seen = new Dictionary<int, WeaponCand>();
+            Action<int, string> add = (id, src) =>
+            {
+                WeaponCand old;
+                if (seen.TryGetValue(id, out old)) { if (src == SRC_SHOP) old.InShop = true; return; }
+                WeaponCand w = MakeWeapon(id, src);
+                if (w == null) return;
+                w.InShop = src == SRC_SHOP;
+                seen[id] = w;
+                list.Add(w);
+            };
+            if (Work.memberdata != null)
+            {
+                int n = PartyWeight.Count();
+                for (int m = 0; m < n && m < Work.memberdata.Length; m++)
+                {
+                    int[] md = Work.memberdata[m];
+                    if (md == null || md.Length < 81) continue;
+                    for (int s = 77; s <= 80; s++) if (md[s] != 255) add(md[s], SRC_EQUIP);
+                }
+            }
+            foreach (ItemStorage.Entry e in ItemStorage.HeldList()) add(e.Id, SRC_HELD);
+            foreach (ItemStorage.Entry e in ItemStorage.StoredList()) add(e.Id, SRC_STORED);
+            foreach (int id in ShopItemsNow()) add(id, SRC_SHOP);
+            return list;
+        }
+
+        private sealed class AttrRank { public int Index, Weak, Normal; public List<Enemy> Weaks = new List<Enemy>(), Normals = new List<Enemy>(); }
+
+        /// <summary>
+        /// 属性ごとに、それが ◎ (Weaks) / ○ (Normals) の敵。mask = 見る属性 (0xF0 物理、0x0F 術系、0xFF 全部)。
+        /// 並びは ◎ の敵の数 (体数) が多い順 → ○ が多い順。どの敵にも ○ 以上が付かない属性は入れない。
+        /// (前は「その敵の物理 / 術系の中で一番低い属性」を弱点にしていて、全属性 20 の敵にも弱点が出た。ユーザー 2026-10-25: 絶対値で)
+        /// </summary>
+        private static List<AttrRank> RankAttrs(int mask)
+        {
+            List<AttrRank> list = new List<AttrRank>();
+            for (int k = 0; k < 8; k++)
+            {
+                if ((mask & (0x80 >> k)) == 0) continue;
+                AttrRank r = new AttrRank { Index = k };
+                foreach (Enemy e in s_enemies)
+                {
+                    int rate = Rate(e.Def[k]);
+                    if (rate == RATE_WEAK) { r.Weak += e.Count; r.Weaks.Add(e); }
+                    else if (rate == RATE_NORMAL) { r.Normal += e.Count; r.Normals.Add(e); }
+                }
+                if (r.Weak + r.Normal > 0) list.Add(r);
+            }
+            list.Sort((p, q) => p.Weak != q.Weak ? q.Weak.CompareTo(p.Weak) : p.Normal != q.Normal ? q.Normal.CompareTo(p.Normal) : p.Index.CompareTo(q.Index));
+            return list;
+        }
+
+        /// <summary>全部の属性が △ 以下の敵 (弱点なし。無理に一番低い属性を選ばない)。</summary>
+        private static List<Enemy> NoWeakEnemies()
+        {
+            List<Enemy> list = new List<Enemy>();
+            foreach (Enemy e in s_enemies)
+            {
+                bool any = false;
+                for (int k = 0; k < 8 && !any; k++) any = Rate(e.Def[k]) <= RATE_NORMAL;
+                if (!any) list.Add(e);
+            }
+            return list;
+        }
+
+        /// <summary>「◎ドビー  ○ガーゴイル」の並び (◎ は赤、○ は黒)。</summary>
+        private static List<KeyValuePair<string, GUIStyle>> EnemyMarks(AttrRank r)
+        {
+            List<KeyValuePair<string, GUIStyle>> segs = new List<KeyValuePair<string, GUIStyle>>();
+            foreach (Enemy e in r.Weaks) segs.Add(new KeyValuePair<string, GUIStyle>(RateMarks[RATE_WEAK] + e.Name + "  ", s_redLeft));
+            foreach (Enemy e in r.Normals) segs.Add(new KeyValuePair<string, GUIStyle>(RateMarks[RATE_NORMAL] + e.Name + "  ", s_line));
+            return segs;
+        }
+
+        /// <summary>色の違う文字列を左から並べて描く。幅を超える分は描かない。</summary>
+        private static void DrawSegs(float x, float y, float w, float h, List<KeyValuePair<string, GUIStyle>> segs)
+        {
+            float right = x + w;
+            foreach (KeyValuePair<string, GUIStyle> s in segs)
+            {
+                float tw = TextW(s.Key, s.Value);
+                if (x + tw > right) break;
+                Txt(new Rect(x, y, tw + 4f, h), s.Key, s.Value);
+                x += tw;
             }
         }
 
-        /// <summary>
-        /// 味方の技がその敵の弱点をついたか。技の攻撃属性 (waza_data[技*10+4] のビット、0x80 = 斬 … 0x01 = 状) のうち一番低い防御力が、
-        /// その敵の 8 種の中で一番低い値 (ページ 1 で赤にするもの) と同じなら弱点。全部同じ値の敵 (差が無い) は弱点なしとする。
-        /// </summary>
-        private static bool HitsWeakness(int tech, int targetCode)
+        /// <summary>属性の印 [突] [熱] (武器 / 術の名前の前に。ユーザー 2026-10-25: 剣や槍の種類ではなく属性で言ってほしい)。</summary>
+        private static string AttrLabel(int bits) { return "[" + AttrText(bits) + "]"; }
+
+        // ---------------------------------------------------------------- 術のヒント (術系の弱点に対して。ユーザー 2026-10-25)
+        //
+        // 術 = 技 201..254 (201..230 が 6 系統 × 5 の基本の術、231..254 が合成術 2 つ × 12 組)。系統は waza_data[+8] の 0x20 火 0x40 水 0x80 風、
+        // [+9] の 0x01 地 0x02 天 0x04 冥。対象は [+5] の下位 6 ビット (2 = 敵 1 体、14 = 敵 1 体 + 周り、50 = 敵全体。それ以外は味方向け)。威力は [+2]。
+        // 覚えられる術 = パーティ共通の旗 partydata[257 + id/8] (使える) / [321 + id/8] (研究済み、世代が進むと使える旗に写る = 研究中)。
+        // 基本の術は系統のレベル partydata[390 + 系統] が Data.jyutsu_flag_data[系統*10 + j*2] (レベル, +1 = 術) に届くと旗が立つ (Battle.set_jyutuflag)。
+        // 合成術は研究所で研究 (組の 1 つ目は両系統 Lv15、2 つ目は Lv25、50 万クラウン。msg 1012 / 1013)。
+        // 術法研究所 (アバロンの開発、100 万、msg 745): flag132 = 13 提案中、14 建設中、15 完成 (年が進む msg 2061 が 14 → 15)。無いと術は一切覚えられない。
+        //   (最初は 14 を完成と見ていて、建っているのに「建てると」が出た。ユーザー 2026-10-25)
+        // 誰がどの系統を覚えるかはユーザーの判断 (ここでは見ない)。
+
+        private static readonly string[] SchoolNames = { "火", "水", "風", "地", "天", "冥" };   // partydata[390 + i] と jyutsu_flag_data の順
+
+        private sealed class SpellCand { public int Id, Power, Rank; public string Status; }   // Rank: 0 = 習得可、1 = 研究中、2 = まだ
+
+        private static bool PartyBit(int baseIdx, int id)
         {
-            if ((targetCode & 0x80) == 0) return false;
-            int slot = targetCode & 0x7F;
-            Enemy e = slot < 10 ? s_slotEnemy[slot] : null;
+            int[] pd = Work.partydata;
+            int i = baseIdx + id / 8;
+            return pd != null && i < pd.Length && (pd[i] & (128 >> (id & 7))) != 0;
+        }
+
+        /// <summary>術の系統のビット (SchoolNames の添字のビット、bit i = 系統 i)。</summary>
+        private static int SpellSchools(int id)
+        {
             byte[] w = Data.waza_data;
-            if (e == null || w == null || tech < 0 || tech * 10 + 4 >= w.Length) return false;
-            int attr = w[tech * 10 + 4] & 0xFF;
-            if (attr == 0 || attr == 255) return false;
-            int min = 255, max = -1, eff = 255;
-            for (int k = 0; k < 8; k++)
+            if (w == null || id * 10 + 9 >= w.Length) return 0;
+            int b8 = w[id * 10 + 8] & 0xFF, b9 = w[id * 10 + 9] & 0xFF, s = 0;
+            if ((b8 & 0x20) != 0) s |= 1;
+            if ((b8 & 0x40) != 0) s |= 2;
+            if ((b8 & 0x80) != 0) s |= 4;
+            if ((b9 & 0x01) != 0) s |= 8;
+            if ((b9 & 0x02) != 0) s |= 16;
+            if ((b9 & 0x04) != 0) s |= 32;
+            return s;
+        }
+
+        private static string SchoolText(int bits)
+        {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < 6; i++) if ((bits & (1 << i)) != 0) sb.Append(SchoolNames[i]);
+            return sb.ToString();
+        }
+
+        /// <summary>基本の術が解禁される系統のレベル (jyutsu_flag_data から)。見つからなければ -1。</summary>
+        private static int UnlockLevel(int id, out int school)
+        {
+            school = -1;
+            byte[] t = Data.jyutsu_flag_data;
+            if (t == null) return -1;
+            for (int i = 0; i < 6; i++)
+                for (int j = 0; j < 5; j++)
+                {
+                    int at = i * 10 + j * 2;
+                    if (at + 1 >= t.Length) return -1;
+                    if ((t[at + 1] & 0xFF) == id) { school = i; return t[at] & 0xFF; }
+                }
+            return -1;
+        }
+
+        private static int SchoolLevel(int school)
+        {
+            int[] pd = Work.partydata;
+            return (pd != null && school >= 0 && 390 + school < pd.Length) ? pd[390 + school] : 0;
+        }
+
+        /// <summary>術系の弱点 weak (熱冷雷状のビット) を突ける攻撃の術と、その手に入れ方。習得できるものを先に、あとは威力の高い順。</summary>
+        private static List<SpellCand> SpellCandidates(int weak)
+        {
+            List<SpellCand> list = new List<SpellCand>();
+            byte[] w = Data.waza_data;
+            if (w == null) return list;
+            for (int id = 201; id <= 254; id++)
             {
-                int v = e.Def[k];
-                if (v >= 128) continue;
-                if (v < min) min = v;
-                if (v > max) max = v;
-                if ((attr & (0x80 >> k)) != 0 && v < eff) eff = v;
+                if (id * 10 + 9 >= w.Length) break;
+                if ((TechAttr(id) & weak) == 0) continue;
+                int tgt = w[id * 10 + 5] & 0x3F;
+                if (tgt != 2 && tgt != 14 && tgt != 50) continue;   // 味方向け (回復・補助) は出さない
+                SpellCand c = new SpellCand { Id = id, Power = w[id * 10 + 2] & 0xFF };
+                // 冥術は古代魔術書の件が済む (f131 >= 8。研究所の冥の部屋 map 437 の NPC の表示条件) まで教えてもらえない (ユーザー 2026-10-25: ホラーが習得可と出た)
+                bool abyssLocked = (SpellSchools(id) & 32) != 0 && Flag(131) < 8;
+                if (abyssLocked) { c.Rank = 2; c.Status = "冥術はまだ教えてもらえない"; }
+                else if (PartyBit(257, id)) { c.Rank = 0; c.Status = "習得可"; }
+                else if (PartyBit(321, id)) { c.Rank = 1; c.Status = "研究中"; }
+                else if (id <= 230)
+                {
+                    int school; int lv = UnlockLevel(id, out school);
+                    c.Rank = 2;
+                    c.Status = lv < 0 ? "まだ" : SchoolNames[school] + " Lv" + lv + " で (今 " + SchoolLevel(school) + ")";
+                }
+                else
+                {
+                    int need = ((id - 231) & 1) == 0 ? 15 : 25;
+                    c.Rank = 2;
+                    c.Status = "研究 (" + SchoolText(SpellSchools(id)) + " Lv" + need + ")";
+                }
+                list.Add(c);
             }
-            return min < 255 && max > min && eff == min;
+            list.Sort((p, q) => p.Rank != q.Rank ? p.Rank.CompareTo(q.Rank) : q.Power.CompareTo(p.Power));
+            return list;
+        }
+
+        // ---------------------------------------------------------------- 装備のヒントの 2 ページ (表)。2026-10-25
+        //
+        // 「これを何個揃えたらいけるか」の表。人数分 (PartyWeight.Count) を目標に、今持っている数 (装備中 + 持ち物 + 倉庫) との差と、
+        // 今行ける店で買える一番良い品の値段 × 差を出す。値段 = Data.item_value[id*2] (16 ビット LE。Menu.shop_data_read と同じ)。
+        // 誰に持たせるかは見ない (ユーザーの判断)。所持金は出さない (ユーザー 2026-10-25)。
+
+        private static int Price(int id)
+        {
+            byte[] v = Data.item_value;
+            if (v == null || id < 0 || id * 2 + 1 >= v.Length) return 0;
+            return (v[id * 2] & 0xFF) | ((v[id * 2 + 1] & 0xFF) << 8);
+        }
+
+        private static string Num(int n) { return n.ToString("#,0"); }
+
+        /// <summary>条件に合う品物の ID → 今持っている個数 (装備中の枠 77..83 + 持ち物 + 倉庫)。</summary>
+        private static Dictionary<int, int> OwnedList(Predicate<int> pred)
+        {
+            Dictionary<int, int> d = new Dictionary<int, int>();
+            if (Work.memberdata != null)
+            {
+                int members = PartyWeight.Count();
+                for (int m = 0; m < members && m < Work.memberdata.Length; m++)
+                {
+                    int[] md = Work.memberdata[m];
+                    if (md == null || md.Length < 84) continue;
+                    for (int s = 77; s <= 83; s++) { int id = md[s]; if (id != 255 && pred(id)) d[id] = (d.ContainsKey(id) ? d[id] : 0) + 1; }
+                }
+            }
+            foreach (ItemStorage.Entry e in ItemStorage.HeldList()) if (pred(e.Id)) d[e.Id] = (d.ContainsKey(e.Id) ? d[e.Id] : 0) + e.Held;
+            foreach (ItemStorage.Entry e in ItemStorage.StoredList()) if (pred(e.Id)) d[e.Id] = (d.ContainsKey(e.Id) ? d[e.Id] : 0) + e.Stored;
+            return d;
+        }
+
+        private static int CountOf(Dictionary<int, int> owned) { int n = 0; foreach (int v in owned.Values) n += v; return n; }
+
+        // 表の列: 名前 (属性を [ ] で先頭に) / 手持ち / 不足 / 効く敵・受けた量 / 買うなら (ユーザー 2026-10-25: 何の武器か分かるように名前を先頭に)
+        private sealed class Tbl { public float X, W, LineH, NameW, HaveX, HaveW, GapX, GapW, MidX, MidW, Mid2X, Mid2W, BuyX, BuyW; public long Total; }
+
+        /// <summary>列の幅 (fontSize の倍数)。mid = 効く敵 / 受けた量、mid2 = 誰から (0 なら無し)。</summary>
+        private static Tbl MakeTbl(float cx, float cw, float lineH, int fontSize, float midEm, float mid2Em)
+        {
+            Tbl t = new Tbl { X = cx, W = cw, LineH = lineH };
+            t.NameW = Mathf.Round(fontSize * 15f); t.HaveW = Mathf.Round(fontSize * 3.6f); t.GapW = Mathf.Round(fontSize * 3f); t.MidW = Mathf.Round(fontSize * midEm); t.Mid2W = Mathf.Round(fontSize * mid2Em);
+            t.HaveX = cx + t.NameW; t.GapX = t.HaveX + t.HaveW; t.MidX = t.GapX + t.GapW + Mathf.Round(fontSize * 0.8f); t.Mid2X = t.MidX + t.MidW; t.BuyX = t.Mid2X + t.Mid2W; t.BuyW = cx + cw - t.BuyX;
+            return t;
+        }
+
+        private static void TblHeader(Tbl t, float y, string kind, string mid, string mid2, string buy)
+        {
+            Txt(new Rect(t.X, y, t.NameW, t.LineH), kind, s_head);
+            Txt(new Rect(t.HaveX, y, t.HaveW, t.LineH), "手持ち", s_rightDim);
+            Txt(new Rect(t.GapX, y, t.GapW, t.LineH), "不足", s_rightDim);
+            Txt(new Rect(t.MidX, y, t.MidW, t.LineH), mid, s_dim);
+            if (t.Mid2W > 0f) Txt(new Rect(t.Mid2X, y, t.Mid2W, t.LineH), mid2, s_dim);
+            Txt(new Rect(t.BuyX, y, t.BuyW, t.LineH), buy, s_dim);
+        }
+
+        /// <summary>1 行: 名前、手持ち (have &lt; 0 = 数えないので ―)、不足 (0 は ―)、買うなら (gap 個を店の品 shopId で。shopId &lt; 0 なら buyText、null = ―)。</summary>
+        private static void TblRow(Tbl t, float y, string name, GUIStyle nst, int have, int gap, int shopId, string buyText)
+        {
+            Txt(new Rect(t.X, y, t.NameW, t.LineH), name, nst);
+            Txt(new Rect(t.HaveX, y, t.HaveW, t.LineH), have < 0 ? "―" : have.ToString(), have > 0 ? s_right : s_rightDim);
+            Txt(new Rect(t.GapX, y, t.GapW, t.LineH), gap > 0 ? gap.ToString() : "―", gap > 0 ? s_redRight : s_rightDim);
+            string buy = buyText ?? "―"; GUIStyle bst = s_dim;
+            if (gap > 0 && shopId >= 0) { int p = Price(shopId); t.Total += (long)p * gap; buy = Num(p) + " × " + gap; bst = s_line; }
+            Txt(new Rect(t.BuyX, y, t.BuyW, t.LineH), buy, bst);
+        }
+
+        private static float TblTotal(Tbl t, float y, float bottom)
+        {
+            if (y + t.LineH > bottom) return y;
+            if (t.Total > 0) Txt(new Rect(t.X, y, t.W, t.LineH), "買い足しの合計  " + Num((int)t.Total) + " クラウン", s_line);
+            else Txt(new Rect(t.X, y, t.W, t.LineH), "買い足しは要らない (人数分ある、または今行ける店に無い)", s_dim);
+            return y + t.LineH;
+        }
+
+        /// <summary>
+        /// 装備のヒント (武器と術) のページ。◎ の敵がいる属性ごとに 1 行 (◎ の敵が多い順。◎ がどこにも無ければ ○ の属性)。
+        /// 物理: 名前 = 揃える武器 (足りていれば持っている中で一番強いもの、足りなければ今行ける店で買える一番強いもの)、手持ち = その属性で通常攻撃できる武器の数。
+        /// 術系: 名前 = 研究所で今覚えられる一番強い攻撃の術 (研究所が無ければ建つと覚えられる基本の術と、建てる助言)。手持ち / 不足は数えない (人数分を買う物ではない)。
+        /// 手に入る武器も覚えられる術も無い属性は出さない (ユーザー 2026-10-25: 手が無いのに敵の名前を並べても要らない)。
+        /// </summary>
+        private static void DrawWeaponTablePage(float cx, float cy, float cw, float lineH, int fontSize, float bottom)
+        {
+            if (s_enemies.Count == 0) { Txt(new Rect(cx, cy, cw, lineH), "敵の記録がありません", s_dim); return; }
+            int members = PartyWeight.Count();
+            Tbl t = MakeTbl(cx, cw, lineH, fontSize, 13f, 0f);
+            List<WeaponCand> wc = WeaponCandidates();
+            List<AttrRank> ranks = RankAttrs(0xFF);
+            bool anyWeak = false;
+            foreach (AttrRank r in ranks) if (r.Weak > 0) anyWeak = true;
+            float tableBottom = bottom - lineH * 4.6f;   // 下に合計 1 行 + 説明 3 行 (+ 余白) を残す
+            TblHeader(t, cy, "武器 / 術", "効く敵", null, "買う / 覚える"); cy += lineH;
+            int shown = 0, f = Flag(132);
+            // 1 周目は武器 (物理の属性)、2 周目は術 (術系の属性)。それぞれの中は ◎ の敵が多い順 (ユーザー 2026-10-25: 武器と術でまとめる)
+            for (int pass = 0; pass < 2; pass++)
+            foreach (AttrRank r in ranks)
+            {
+                if ((r.Index < 4) != (pass == 0) || (anyWeak && r.Weak == 0)) continue;
+                if (cy + lineH > tableBottom) break;
+                int bit = 0x80 >> r.Index;
+                if (r.Index < 4)
+                {
+                    int have = CountOf(OwnedList(id => { WeaponCand w = MakeWeapon(id, ""); return w != null && (w.Attr & bit) != 0; }));
+                    int gap = Mathf.Max(0, members - have);
+                    WeaponCand shop = null, own = null;
+                    foreach (WeaponCand w in wc)
+                    {
+                        if ((w.Attr & bit) == 0) continue;
+                        if (w.InShop) { if (shop == null || w.Power > shop.Power) shop = w; }
+                        else if (own == null || w.Power > own.Power) own = w;
+                    }
+                    WeaponCand pick = gap > 0 && shop != null ? shop : (own ?? shop);
+                    if (pick == null) continue;
+                    TblRow(t, cy, AttrLabel(bit) + ItemStorage.Name(pick.Id) + " 威" + pick.Power, s_line, have, gap, shop != null ? shop.Id : -1, gap > 0 ? "店に無い" : null);
+                }
+                else
+                {
+                    // 研究所が完成 (15) なら今覚えられる一番強い術。建設中 (14) / 未建設なら、建つと覚えられる基本の術の一番強いもの (薄く)
+                    SpellCand pick = null;
+                    foreach (SpellCand c in SpellCandidates(bit)) if (f >= 15 ? c.Rank == 0 : c.Id <= 230) { pick = c; break; }
+                    if (pick == null) continue;
+                    string how = f >= 15 ? "研究所で覚える" : (f == 14 ? "研究所の完成を待つ" : "研究所を建てる");
+                    TblRow(t, cy, AttrLabel(bit) + TechName(pick.Id, -1, true) + " 威" + pick.Power, f >= 15 ? s_line : s_dim, -1, 0, -1, how);
+                }
+                DrawSegs(t.MidX, cy, t.MidW, lineH, EnemyMarks(r));
+                cy += lineH;
+                shown++;
+            }
+            if (shown == 0 && cy + lineH <= tableBottom) { Txt(new Rect(cx, cy, cw, lineH), "○ 以上の属性に、手に入る武器も覚えられる術も無い", s_dim); cy += lineH; }
+            List<Enemy> none = NoWeakEnemies();
+            if (none.Count > 0 && cy + lineH <= tableBottom)
+            {
+                StringBuilder sb = new StringBuilder("弱点なし (全部 △ 以下): ");
+                for (int i = 0; i < none.Count; i++) sb.Append(i > 0 ? "・" : "").Append(none[i].Name);
+                Txt(new Rect(cx, cy, cw, lineH), sb.ToString(), s_dim);
+                cy += lineH;
+            }
+            cy = TblTotal(t, Mathf.Max(cy + Mathf.Round(lineH * 0.5f), tableBottom), bottom);
+            cy += Mathf.Round(lineH * 0.3f);
+            float hintH = Mathf.Round(lineH * 0.9f);
+            cy = DrawWrapped(cx, cy, cw, hintH, "武器 = [ ] の属性で通常攻撃できるもの。足りなければ今行ける店で買える一番強いものを名前に出す。威 = 威力。", s_hint, bottom);
+            cy = DrawWrapped(cx, cy, cw, hintH, "術 = [ ] の属性の攻撃の術で、研究所で今覚えられる一番強いもの。手持ちは数えない。", s_hint, bottom);
+            cy = DrawWrapped(cx, cy, cw, hintH, "手持ち = 装備中 + 持ち物 + 倉庫 (パーティ " + members + " 人分を目安に)。◎ よく効く (弱点)  ○ 普通に効く", s_hint, bottom);
+        }
+
+        /// <summary>
+        /// 装備のヒント (防具) のページ。敵が使った属性ごとに 1 行 (受けた HP のダメージの多い順)。名前 = 揃える防具 (足りていれば持っている中で
+        /// その属性の防御力が一番高いもの、足りなければ今行ける店で買える一番高いもの。部位も出す)、手持ち = その属性の防御力が持っている中で一番高い値の
+        /// 半分以上のもの、受けた量 = 被ダメージと使った敵 (HP も LP も減らない技は技の名前)、買うなら。
+        /// (ユーザー 2026-10-25: 防具は武器と別のページに。部位ごとの表 (旧 5 ページ目) は無くす)
+        /// </summary>
+        private static void DrawArmorTablePage(float cx, float cy, float cw, float lineH, int fontSize, float bottom)
+        {
+            if (s_enemies.Count == 0) { Txt(new Rect(cx, cy, cw, lineH), "敵の記録がありません", s_dim); return; }
+            int members = PartyWeight.Count();
+            Tbl t = MakeTbl(cx, cw, lineH, fontSize, 5.5f, 7.5f);   // 受けた量 / 誰から を別の列に (ユーザー 2026-10-25)
+            List<AttrCol> used = UsedAttrs();
+            List<ArmorCand> ac = ArmorCandidates();
+            float tableBottom = bottom - lineH * 4.6f;
+            TblHeader(t, cy, "防具", "受けた量", "誰から", "買うなら"); cy += lineH;
+            if (used.Count == 0 && cy + lineH <= tableBottom) { Txt(new Rect(cx, cy, cw, lineH), "敵の技の属性の記録がない", s_dim); cy += lineH; }
+            foreach (AttrCol a in used)
+            {
+                if (cy + lineH > tableBottom) break;
+                int k = a.Index;
+                int top = 0;
+                foreach (KeyValuePair<int, int> kv in OwnedList(id => ArmorPart(id) >= 0 && ArmorDef(id, k) > 0)) { int v = ArmorDef(kv.Key, k); if (v > top) top = v; }
+                int floor = Mathf.Max(1, (top + 1) / 2);
+                int have = CountOf(OwnedList(id => ArmorPart(id) >= 0 && ArmorDef(id, k) >= floor));
+                int gap = Mathf.Max(0, members - have);
+                ArmorCand shop = null, own = null; int shopV = 0, ownV = 0;
+                foreach (ArmorCand c in ac)
+                {
+                    int v = ArmorDef(c.Id, k);
+                    if (v <= 0) continue;
+                    if (c.InShop) { if (v > shopV) { shopV = v; shop = c; } }
+                    else if (v > ownV) { ownV = v; own = c; }
+                }
+                ArmorCand pick = gap > 0 && shop != null ? shop : (own ?? shop);
+                string name = "[" + TypeNames[k] + "]" + (pick != null ? ItemStorage.Name(pick.Id) + " (" + PartNames[pick.Part] + ") 防" + ArmorDef(pick.Id, k) : " 防ぐ防具が手に入らない");
+                TblRow(t, cy, name, pick != null ? s_line : s_dim, have, gap, shop != null ? shop.Id : -1, gap > 0 ? "店に無い" : null);
+                Txt(new Rect(t.MidX, cy, t.MidW, lineH), TakenText(a, true), s_dim);
+                Txt(new Rect(t.Mid2X, cy, t.Mid2W, lineH), string.Join("・", a.Enemies.ToArray()), s_dim);
+                cy += lineH;
+            }
+            cy = TblTotal(t, Mathf.Max(cy + Mathf.Round(lineH * 0.5f), tableBottom), bottom);
+            cy += Mathf.Round(lineH * 0.3f);
+            float hintH = Mathf.Round(lineH * 0.9f);
+            cy = DrawWrapped(cx, cy, cw, hintH, "防具 = [ ] の属性の防御力 (防) が、持っている中で一番高い値の半分以上のもの (部位は問わない)。足りなければ今行ける店で買える一番高いものを名前に出す。", s_hint, bottom);
+            cy = DrawWrapped(cx, cy, cw, hintH, "受けた量: 被 = 受けた HP のダメージの合計。HP の減らない技は技の名前。", s_hint, bottom);
+            cy = DrawWrapped(cx, cy, cw, hintH, "手持ち = 装備中 + 持ち物 + 倉庫 (パーティ " + members + " 人分を目安に)。", s_hint, bottom);
         }
 
         private static Texture2D Solid(Color c)
@@ -859,6 +1674,8 @@ namespace RS2QoL.Patches
                 try { s_font = Font.CreateDynamicFontFromOSFont(new[] { "Meiryo UI", "Yu Gothic UI", "MS UI Gothic" }, fontSize); }
                 catch (Exception e) { Plugin.Log.LogWarning("[BattleReview] OS font unavailable: " + e.Message); }
             }
+            MeasureCenters(fontSize);
+            s_leftStyles.Clear();
             s_box = new GUIStyle(GUI.skin.box);
             s_box.normal.background = Solid(new Color(0.18f, 0.18f, 0.2f, 0.94f));
             s_line = new GUIStyle(GUI.skin.label);
@@ -888,6 +1705,10 @@ namespace RS2QoL.Patches
             s_red.normal.textColor = new Color(0.6f, 0.06f, 0.03f);
             s_redRight = new GUIStyle(s_red);
             s_redRight.alignment = TextAnchor.MiddleRight;
+            s_redLeft = new GUIStyle(s_red);
+            s_redLeft.alignment = TextAnchor.MiddleLeft;
+            s_redRightPlain = new GUIStyle(s_redRight);
+            s_redRightPlain.fontStyle = FontStyle.Normal;
             s_cell = new GUIStyle(s_center);
             s_cell.fontSize = Mathf.Max(10, fontSize - 2);
             s_cellDim = new GUIStyle(s_cell);

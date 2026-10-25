@@ -524,7 +524,7 @@ namespace RS2QoL
             GUIStyle[] gs = GameStyles(style, f);
             float sc = style.fontSize / (float)f.fontSize;
             Matrix4x4 old = GUI.matrix;
-            GUI.matrix = Matrix4x4.Scale(new Vector3(sc, sc, 1f)) * old;
+            GUI.matrix = old * Matrix4x4.Scale(new Vector3(sc, sc, 1f));   // 文字の倍率を先に、外側の変換を後に (逆だと外側の平行移動まで縮む。実機 2026-10-25)
             Rect sr = new Rect(r.x / sc, r.y / sc, r.width / sc, r.height / sc);
             float px = 1f / sc;                                   // 画面の 1 画素
             bool bold = style.fontStyle == FontStyle.Bold;
