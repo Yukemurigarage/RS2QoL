@@ -1625,7 +1625,7 @@ namespace RS2QoL.Patches
             List<AttrRank> ranks = RankAttrs(0xFF);
             bool anyWeak = false;
             foreach (AttrRank r in ranks) if (r.Weak > 0) anyWeak = true;
-            float tableBottom = bottom - lineH * 3.6f;   // 下に説明 3 行 (+ 余白) を残す
+            float tableBottom = bottom - lineH * 4.4f;   // 下に説明 4 行 (0.9 行 × 4 + 余白) を残す
             TblHeader(t, cy, "武器 / 術", "効く敵", null); cy += lineH;
             cy = BeginTable(cy, tableBottom, lineH);
             int shown = 0, f = Flag(132);
@@ -1684,9 +1684,11 @@ namespace RS2QoL.Patches
             cy = EndTable(t, cy, tableBottom, lineH);
             cy += Mathf.Round(lineH * 0.3f);
             float hintH = Mathf.Round(lineH * 0.9f);
-            cy = DrawWrapped(cx, cy, cw, hintH, "武器 = [ ] の属性で通常攻撃できる、手に入る中で一番強いもの (手持ち + 倉庫 + 今行ける店)。威 = 威力。店 = 今行ける店で売っているか (○ / ×)。", s_hint, bottom);
-            cy = DrawWrapped(cx, cy, cw, hintH, "術 = [ ] の属性の攻撃の術で、研究所で今覚えられる一番強いもの (未建設 / 建設中なら建つと覚えられるもの)。手持ちは数えない。", s_hint, bottom);
-            cy = DrawWrapped(cx, cy, cw, hintH, "手持ち = その品の数 (装備中 + 持ち物 + 倉庫。パーティ " + members + " 人分を目安に)。店 × の行は 2 行目に今行ける店で買える一番強い物、手持ち 0 の行は今持っている中で一番強い物。◎ よく効く (弱点)  ○ 普通に効く", s_hint, bottom);
+            // 注釈は 1 行ずつ 1 行に収まる長さ (1600×900 で約 50 字。2026-10-28 の撮影で 3 行目が切れていた)
+            cy = DrawWrapped(cx, cy, cw, hintH, "武器 = [ ] の属性で通常攻撃できる、手に入る中で一番強いもの。威 = 威力。店 = 今行ける店にあるか。", s_hint, bottom);
+            cy = DrawWrapped(cx, cy, cw, hintH, "術 = 研究所で今覚えられる一番強い攻撃の術 (未建設 / 建設中なら建つと覚えられる術)。", s_hint, bottom);
+            cy = DrawWrapped(cx, cy, cw, hintH, "手持ち = その品の数 (装備中 + 持ち物 + 倉庫。パーティ " + members + " 人)。◎ よく効く (弱点)  ○ 普通に効く", s_hint, bottom);
+            cy = DrawWrapped(cx, cy, cw, hintH, "2 行目 = 店に無い時は今行ける店で一番強い物、手持ち 0 の時は今持っている中で一番強い物。", s_hint, bottom);
         }
 
         /// <summary>
@@ -1702,7 +1704,7 @@ namespace RS2QoL.Patches
             Tbl t = MakeTbl(cx, cw, lineH, fontSize, 5.5f, 7.5f);   // 受けた量 / 誰から を別の列に (ユーザー 2026-10-25)
             List<AttrCol> used = UsedAttrs();
             List<ArmorCand> ac = ArmorCandidates();
-            float tableBottom = bottom - lineH * 3.6f;
+            float tableBottom = bottom - lineH * 4.4f;
             TblHeader(t, cy, "防具", "受けた量", "誰から"); cy += lineH;
             cy = BeginTable(cy, tableBottom, lineH);
             if (used.Count == 0) { Txt(new Rect(cx, cy, cw, lineH), "敵の技の属性の記録がない", s_dim); cy += lineH; }
@@ -1736,9 +1738,10 @@ namespace RS2QoL.Patches
             cy = EndTable(t, cy, tableBottom, lineH);
             cy += Mathf.Round(lineH * 0.3f);
             float hintH = Mathf.Round(lineH * 0.9f);
-            cy = DrawWrapped(cx, cy, cw, hintH, "防具 = [ ] の属性の防御力 (防) が手に入る中で一番高いもの (部位は問わない。手持ち + 倉庫 + 今行ける店)。店 = 今行ける店で売っているか (○ / ×)。", s_hint, bottom);
+            cy = DrawWrapped(cx, cy, cw, hintH, "防具 = [ ] の属性の防御力 (防) が手に入る中で一番高いもの (部位は問わない)。店 = 今行ける店にあるか。", s_hint, bottom);
             cy = DrawWrapped(cx, cy, cw, hintH, "受けた量: 被 = 受けた HP のダメージの合計。HP の減らない技は技の名前。", s_hint, bottom);
-            cy = DrawWrapped(cx, cy, cw, hintH, "手持ち = その品の数 (装備中 + 持ち物 + 倉庫。パーティ " + members + " 人分を目安に)。店 × の行は 2 行目に今行ける店で買える一番強い物、手持ち 0 の行は今持っている中で一番強い物。", s_hint, bottom);
+            cy = DrawWrapped(cx, cy, cw, hintH, "手持ち = その品の数 (装備中 + 持ち物 + 倉庫。パーティ " + members + " 人)。", s_hint, bottom);
+            cy = DrawWrapped(cx, cy, cw, hintH, "2 行目 = 店に無い時は今行ける店で一番強い物、手持ち 0 の時は今持っている中で一番強い物。", s_hint, bottom);
         }
 
         private static Texture2D Solid(Color c)
