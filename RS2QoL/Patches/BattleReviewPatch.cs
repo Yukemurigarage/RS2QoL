@@ -66,6 +66,8 @@ namespace RS2QoL.Patches
         }
 
         private const int BTN_OK = 0x100000, BTN_CANCEL = 0x400000;
+        private const int DIR_UP = 0x20000, DIR_DOWN = 0x80000;   // Util.GetKeypadState のビット (TreasuryScreen と同じ)
+        private const float REPEAT_FIRST = 0.4f, REPEAT_NEXT = 0.1f;
         private static int PAGES { get { return EquipHints != null && EquipHints.Value ? 4 : 2; } }   // 装備のヒントの 2 ページは設定で足す (2026-10-25)
         private const int PAGE_ENEMY = 0, PAGE_ENEMY_ACTS = 1, PAGE_WEAPONS = 2, PAGE_ARMOR = 3;   // ターン表 (敵の行動 / こちらの行動) の 2 ページはユーザー 2026-10-25 に外した (91496c6 まで)
         private static readonly string[] TypeNames = { "斬", "打", "突", "射", "熱", "冷", "雷", "状" };
@@ -119,6 +121,11 @@ namespace RS2QoL.Patches
         private static int s_page;
         private static int s_prevKey = -1, s_lastEscFrame = -1;
         private static bool s_prevLB, s_prevRB;
+        // 表のページ (武器と術 / 防具) の縦スクロール。行単位。s_maxScroll は描画のたびに内容の高さから出す (ユーザー 2026-10-28: 入り切らない分は送って見せる)
+        private static int s_scroll, s_maxScroll, s_heldDir;
+        private static float s_nextRepeat;
+        private static bool s_clip;
+        private static float s_clipTop, s_clipBottom;
         private static string[] s_memberNames = new string[5];
         private static List<Enemy> s_enemies = new List<Enemy>();
         private static int s_turns;
@@ -138,7 +145,7 @@ namespace RS2QoL.Patches
             Enabled = config.Bind("BattleReview", "Enabled", true,
                 "全滅した時 (皇帝が倒れた時も)、継承の画面に行く前に「戦闘の振り返り」の窓を出す。敵の弱点と防御力 (8 種の防御力と ◎○△× の印)、敵の技と見切りの難度の 2 ページ (LB / RB で送る、決定かキャンセルで閉じる。EquipHints で「装備のヒント」の 2 ページを足す)");
             EquipHints = config.Bind("BattleReview", "EquipHints", false,
-                "戦闘の振り返りに「装備のヒント」の 2 ページを足す。武器と術: 敵によく効く属性ごとに、揃える武器 (または研究所で覚えられる術) と、今いくつ持っていて人数分にあと何個を今行ける店でいくらで買えるか。防具: 敵が使った属性ごとに同じ表 (どちらも誰かが装備中 / 持ち物 / 倉庫 / 今ワールドマップで行ける町の店で売っている品から)");
+                "戦闘の振り返りに「装備のヒント」の 2 ページを足す。武器と術: 敵によく効く属性ごとに、手に入る中で一番強い武器 (または研究所で覚えられる術) と、今行ける店で売っているか (○×)、その武器を今いくつ持っているか。防具: 敵が使った属性ごとに同じ表 (どちらも誰かが装備中 / 持ち物 / 倉庫 / 今ワールドマップで行ける町の店で売っている品から)");
             WeakMax = config.Bind("BattleReview", "WeakMax", 6,
                 "敵の属性防御力がこの値以下なら ◎ (よく効く = 弱点、赤) と見る。本体の式では防御力は「武器の威力から引く」と「最後に 5 倍を引く」の 2 か所で効き、1 世代目の武器 (威力 7〜15) で差が残るのはこの辺りまで");
             NormalMax = config.Bind("BattleReview", "NormalMax", 14,
@@ -342,6 +349,7 @@ namespace RS2QoL.Patches
         {
             s_page = PAGE_ENEMY;
             s_prevKey = -1;
+            s_scroll = 0; s_heldDir = 0;
             s_prevLB = PageBackDown(); s_prevRB = PageNextDown();
             s_open = true;
             s_shopLogged = false;   // 開くたびに店の判定をログに (調査用)
@@ -382,6 +390,7 @@ namespace RS2QoL.Patches
         private static void TurnPage(int d)
         {
             s_page = (s_page + d + PAGES) % PAGES;
+            s_scroll = 0;
             UiParts.SeCursor();
         }
 
@@ -411,7 +420,20 @@ namespace RS2QoL.Patches
             if (lb && !s_prevLB) TurnPage(-1);
             else if (rb && !s_prevRB) TurnPage(+1);
             s_prevLB = lb; s_prevRB = rb;
+            int dir = key & (DIR_UP | DIR_DOWN);
+            float now = Time.realtimeSinceStartup;
+            if (dir == 0) s_heldDir = 0;
+            else if (dir != s_heldDir) { s_heldDir = dir; s_nextRepeat = now + REPEAT_FIRST; Scroll((dir & DIR_UP) != 0 ? -1 : 1); }
+            else if (now >= s_nextRepeat) { s_nextRepeat = now + REPEAT_NEXT; Scroll((dir & DIR_UP) != 0 ? -1 : 1); }
             return 0;
+        }
+
+        private static void Scroll(int d)
+        {
+            int v = Mathf.Clamp(s_scroll + d, 0, s_maxScroll);
+            if (v == s_scroll) return;
+            s_scroll = v;
+            UiParts.SeCursor();
         }
 
         // ---------------------------------------------------------------- 名前
@@ -563,6 +585,7 @@ namespace RS2QoL.Patches
         private static void Txt(Rect r, string s, GUIStyle st)
         {
             if (string.IsNullOrEmpty(s)) return;
+            if (s_clip && (r.y < s_clipTop - 0.5f || r.y + r.height > s_clipBottom + 0.5f)) return;   // 表のスクロール: 枠からはみ出す行は描かない (行単位)
             if (HasMark(s)) { TxtMarks(r, s, st); return; }
             if (GameFontHas(s)) UiParts.GameLabel(r, s, st);
             else UiParts.Label(new Rect(r.x, r.y + s_osNudge, r.width, r.height), s, st);   // OS のフォントは字が行の中で下に寄る → 本体のフォントの字の中心に合わせる
@@ -861,6 +884,7 @@ namespace RS2QoL.Patches
             cy += headH + lineH * 0.3f;
             float bodyBottom = y + h - pad - footH - lineH * 0.3f;
 
+            s_maxScroll = 0; s_clip = false;   // 表のページだけが BeginTable / EndTable で入れ直す
             switch (s_page)
             {
                 case PAGE_ENEMY: DrawEnemyPage(cx, cy, cw, lineH, fontSize, bodyBottom); break;
@@ -869,7 +893,7 @@ namespace RS2QoL.Patches
                 case PAGE_ARMOR: DrawArmorTablePage(cx, cy, cw, lineH, fontSize, bodyBottom); break;
             }
 
-            string foot = "LB / RB: ページ   決定・キャンセル・Esc: 閉じて継承へ";
+            string foot = "LB / RB: ページ   " + (s_maxScroll > 0 ? "上下: 表を送る   " : "") + "決定・キャンセル・Esc: 閉じて継承へ";
             Txt(new Rect(cx, y + h - pad - footH, cw, footH), foot, s_hint);
         }
 
@@ -1492,16 +1516,9 @@ namespace RS2QoL.Patches
 
         // ---------------------------------------------------------------- 装備のヒントの 2 ページ (表)。2026-10-25
         //
-        // 「これを何個揃えたらいけるか」の表。人数分 (PartyWeight.Count) を目標に、今持っている数 (装備中 + 持ち物 + 倉庫) との差と、
-        // 今行ける店で買える一番良い品の値段 × 差を出す。値段 = Data.item_value[id*2] (16 ビット LE。Menu.shop_data_read と同じ)。
-        // 誰に持たせるかは見ない (ユーザーの判断)。所持金は出さない (ユーザー 2026-10-25)。
-
-        private static int Price(int id)
-        {
-            byte[] v = Data.item_value;
-            if (v == null || id < 0 || id * 2 + 1 >= v.Length) return 0;
-            return (v[id * 2] & 0xFF) | ((v[id * 2 + 1] & 0xFF) << 8);
-        }
+        // 「この属性の最強は何で、どこにあって、何個持っているか」の表。人数分 (PartyWeight.Count) は注釈の目安だけ。
+        // 誰に持たせるかは見ない (ユーザーの判断)。所持金は出さない (ユーザー 2026-10-25)。値段・不足・買い足しの合計も出さない
+        // (ユーザー 2026-10-28: 何がどこにあって何個持っているかが分かれば十分。列が多いと字がかぶる)。
 
         private static string Num(int n) { return n.ToString("#,0"); }
 
@@ -1526,45 +1543,71 @@ namespace RS2QoL.Patches
 
         private static int CountOf(Dictionary<int, int> owned) { int n = 0; foreach (int v in owned.Values) n += v; return n; }
 
-        // 表の列: 名前 (属性を [ ] で先頭に) / 手持ち / 不足 / 効く敵・受けた量 / 買うなら (ユーザー 2026-10-25: 何の武器か分かるように名前を先頭に)
-        private sealed class Tbl { public float X, W, LineH, NameW, HaveX, HaveW, GapX, GapW, MidX, MidW, Mid2X, Mid2W, BuyX, BuyW; public long Total; }
+        /// <summary>品物 1 種の今持っている個数 (装備中 + 持ち物 + 倉庫)。</summary>
+        private static int OwnedCount(int id) { return id < 0 ? 0 : CountOf(OwnedList(x => x == id)); }
 
-        /// <summary>列の幅 (fontSize の倍数)。mid = 効く敵 / 受けた量、mid2 = 誰から (0 なら無し)。</summary>
+        // 表の列: 名前 (属性を [ ] で先頭に) / 店 (今行ける店で売っていれば ○、無ければ ×) / 手持ち / 効く敵・受けた量 (/ 誰から)。名前の列は残り全部
+        // (ユーザー 2026-10-25: 何の武器か分かるように名前を先頭に。2026-10-28: 不足・買うなら・合計の列は外し、店の有無だけ ○× で。列が多いと字がかぶる)
+        private sealed class Tbl { public float X, W, LineH, HeadY, NameW, ShopX, ShopW, HaveX, HaveW, MidX, MidW, Mid2X, Mid2W; }
+
+        /// <summary>列の幅 (fontSize の倍数)。mid = 効く敵 / 受けた量、mid2 = 誰から (0 なら無し)。名前は残りの幅。</summary>
         private static Tbl MakeTbl(float cx, float cw, float lineH, int fontSize, float midEm, float mid2Em)
         {
             Tbl t = new Tbl { X = cx, W = cw, LineH = lineH };
-            t.NameW = Mathf.Round(fontSize * 15f); t.HaveW = Mathf.Round(fontSize * 3.6f); t.GapW = Mathf.Round(fontSize * 3f); t.MidW = Mathf.Round(fontSize * midEm); t.Mid2W = Mathf.Round(fontSize * mid2Em);
-            t.HaveX = cx + t.NameW; t.GapX = t.HaveX + t.HaveW; t.MidX = t.GapX + t.GapW + Mathf.Round(fontSize * 0.8f); t.Mid2X = t.MidX + t.MidW; t.BuyX = t.Mid2X + t.Mid2W; t.BuyW = cx + cw - t.BuyX;
+            t.ShopW = Mathf.Round(fontSize * 2.4f); t.HaveW = Mathf.Round(fontSize * 3.4f); t.MidW = Mathf.Round(fontSize * midEm); t.Mid2W = Mathf.Round(fontSize * mid2Em);
+            float gapW = Mathf.Round(fontSize * 0.8f);
+            t.NameW = cw - (t.ShopW + t.HaveW + gapW + t.MidW + t.Mid2W);
+            t.ShopX = cx + t.NameW; t.HaveX = t.ShopX + t.ShopW; t.MidX = t.HaveX + t.HaveW + gapW; t.Mid2X = t.MidX + t.MidW;
             return t;
         }
 
-        private static void TblHeader(Tbl t, float y, string kind, string mid, string mid2, string buy)
+        private static void TblHeader(Tbl t, float y, string kind, string mid, string mid2)
         {
+            t.HeadY = y;
             Txt(new Rect(t.X, y, t.NameW, t.LineH), kind, s_head);
+            Txt(new Rect(t.ShopX, y, t.ShopW, t.LineH), "店", s_cellDim);
             Txt(new Rect(t.HaveX, y, t.HaveW, t.LineH), "手持ち", s_rightDim);
-            Txt(new Rect(t.GapX, y, t.GapW, t.LineH), "不足", s_rightDim);
             Txt(new Rect(t.MidX, y, t.MidW, t.LineH), mid, s_dim);
             if (t.Mid2W > 0f) Txt(new Rect(t.Mid2X, y, t.Mid2W, t.LineH), mid2, s_dim);
-            Txt(new Rect(t.BuyX, y, t.BuyW, t.LineH), buy, s_dim);
         }
 
-        /// <summary>1 行: 名前、手持ち (have &lt; 0 = 数えないので ―)、不足 (0 は ―)、買うなら (gap 個を店の品 shopId で。shopId &lt; 0 なら buyText、null = ―)。</summary>
-        private static void TblRow(Tbl t, float y, string name, GUIStyle nst, int have, int gap, int shopId, string buyText)
+        /// <summary>1 行: 名前、店 (0 = ×、1 = ○、それ以外 = 出さない。術の行)、手持ち (have &lt; 0 = 数えないので ―)。○× は本体フォントに無いのでテクスチャ (TxtMarks)。</summary>
+        private static void TblRow(Tbl t, float y, string name, GUIStyle nst, int shop, int have)
         {
             Txt(new Rect(t.X, y, t.NameW, t.LineH), name, nst);
+            if (shop == 1) Txt(new Rect(t.ShopX, y, t.ShopW, t.LineH), "○", s_cell);
+            else if (shop == 0) Txt(new Rect(t.ShopX, y, t.ShopW, t.LineH), "×", s_cellDim);
             Txt(new Rect(t.HaveX, y, t.HaveW, t.LineH), have < 0 ? "―" : have.ToString(), have > 0 ? s_right : s_rightDim);
-            Txt(new Rect(t.GapX, y, t.GapW, t.LineH), gap > 0 ? gap.ToString() : "―", gap > 0 ? s_redRight : s_rightDim);
-            string buy = buyText ?? "―"; GUIStyle bst = s_dim;
-            if (gap > 0 && shopId >= 0) { int p = Price(shopId); t.Total += (long)p * gap; buy = Num(p) + " × " + gap; bst = s_line; }
-            Txt(new Rect(t.BuyX, y, t.BuyW, t.LineH), buy, bst);
         }
 
-        private static float TblTotal(Tbl t, float y, float bottom)
+        // 名前が店にしか無い行の 2 行目 (ユーザー 2026-10-28: 買わなくても戦えるかの判断用に、今持っている中で一番強い物を添える)
+        private const string SUB_SHOP = "今行ける店では: ", SUB_SHOP_NONE = "今行ける店にはこの属性の物は無い";   // 店が × の行 (ユーザー 2026-10-28: 店で買える一番良い物も知りたい)
+        private const string SUB_OWN = "今持っている中では: ", SUB_NONE = "今持っている中にこの属性の物は無い";
+
+        /// <summary>行の下に薄く 1 行 (少し字下げ)。表の枠からはみ出す分は Txt が描かない。</summary>
+        private static float DrawSubLine(float cx, float cy, float cw, float lineH, int fontSize, string text)
         {
-            if (y + t.LineH > bottom) return y;
-            if (t.Total > 0) Txt(new Rect(t.X, y, t.W, t.LineH), "買い足しの合計  " + Num((int)t.Total) + " クラウン", s_line);
-            else Txt(new Rect(t.X, y, t.W, t.LineH), "買い足しは要らない (人数分ある、または今行ける店に無い)", s_dim);
-            return y + t.LineH;
+            Txt(new Rect(cx + fontSize, cy, cw - fontSize, lineH), text, s_dim);
+            return cy + lineH;
+        }
+
+        /// <summary>表の本体の始まり: 枠 (top..bottom) の外は Txt が描かない。戻り値はスクロール分だけ上にずらした y。</summary>
+        private static float BeginTable(float top, float bottom, float lineH)
+        {
+            s_clip = true; s_clipTop = top; s_clipBottom = bottom;
+            return top - s_scroll * lineH;
+        }
+
+        /// <summary>表の本体の終わり: 内容の高さから送れる行数を出し、見出しの行の右端に ▲▼ の印を描く。戻り値は枠の下端。</summary>
+        private static float EndTable(Tbl t, float cy, float tableBottom, float lineH)
+        {
+            s_clip = false;
+            float over = cy + s_scroll * lineH - tableBottom;   // 送らない時の内容の下端が枠をどれだけ超えるか
+            s_maxScroll = over > 0.5f ? Mathf.CeilToInt(over / lineH) : 0;
+            if (s_scroll > s_maxScroll) s_scroll = s_maxScroll;
+            string marks = (s_scroll > 0 ? "▲" : "") + (s_scroll < s_maxScroll ? "▼" : "");
+            if (marks.Length > 0) Txt(new Rect(t.X, t.HeadY, t.W, t.LineH), marks, s_rightDim);
+            return tableBottom;
         }
 
         /// <summary>
@@ -1582,30 +1625,36 @@ namespace RS2QoL.Patches
             List<AttrRank> ranks = RankAttrs(0xFF);
             bool anyWeak = false;
             foreach (AttrRank r in ranks) if (r.Weak > 0) anyWeak = true;
-            float tableBottom = bottom - lineH * 4.6f;   // 下に合計 1 行 + 説明 3 行 (+ 余白) を残す
-            TblHeader(t, cy, "武器 / 術", "効く敵", null, "買う / 覚える"); cy += lineH;
+            float tableBottom = bottom - lineH * 3.6f;   // 下に説明 3 行 (+ 余白) を残す
+            TblHeader(t, cy, "武器 / 術", "効く敵", null); cy += lineH;
+            cy = BeginTable(cy, tableBottom, lineH);
             int shown = 0, f = Flag(132);
             // 1 周目は武器 (物理の属性)、2 周目は術 (術系の属性)。それぞれの中は ◎ の敵が多い順 (ユーザー 2026-10-25: 武器と術でまとめる)
             for (int pass = 0; pass < 2; pass++)
             foreach (AttrRank r in ranks)
             {
                 if ((r.Index < 4) != (pass == 0) || (anyWeak && r.Weak == 0)) continue;
-                if (cy + lineH > tableBottom) break;
                 int bit = 0x80 >> r.Index;
+                string sub = null;
                 if (r.Index < 4)
                 {
-                    int have = CountOf(OwnedList(id => { WeaponCand w = MakeWeapon(id, ""); return w != null && (w.Attr & bit) != 0; }));
-                    int gap = Mathf.Max(0, members - have);
-                    WeaponCand shop = null, own = null;
+                    // 名前 = 手に入る中 (手持ち + 倉庫 + 今行ける店) で一番強い武器。同じ威力なら持っている方。店 = 今行ける店で売っているか (○ / ×)。
+                    // 手持ち = その品そのものの個数 (ユーザー 2026-10-28。属性の合計だと「パワードスーツ 6」のように読めて紛らわしい)。
+                    // 店にしか無い時だけ 2 行目に「今持っている中では」一番強い武器を薄く添える (買わなくても戦えるかの判断用。折衷案)
+                    WeaponCand best = null, own = null, shopBest = null;
                     foreach (WeaponCand w in wc)
                     {
                         if ((w.Attr & bit) == 0) continue;
-                        if (w.InShop) { if (shop == null || w.Power > shop.Power) shop = w; }
-                        else if (own == null || w.Power > own.Power) own = w;
+                        bool owned = w.Src != SRC_SHOP;
+                        if (best == null || w.Power > best.Power || (w.Power == best.Power && owned && best.Src == SRC_SHOP)) best = w;
+                        if (owned && (own == null || w.Power > own.Power)) own = w;
+                        if (w.InShop && (shopBest == null || w.Power > shopBest.Power)) shopBest = w;
                     }
-                    WeaponCand pick = gap > 0 && shop != null ? shop : (own ?? shop);
-                    if (pick == null) continue;
-                    TblRow(t, cy, AttrLabel(bit) + ItemStorage.Name(pick.Id) + " 威" + pick.Power, s_line, have, gap, shop != null ? shop.Id : -1, gap > 0 ? "店に無い" : null);
+                    if (best == null) continue;
+                    TblRow(t, cy, AttrLabel(bit) + ItemStorage.Name(best.Id) + " 威" + best.Power, s_line, best.InShop ? 1 : 0, OwnedCount(best.Id));
+                    // 店が × なら 2 行目に今行ける店で買える一番強い物 (無ければ無いと)
+                    if (!best.InShop) sub = shopBest != null ? SUB_SHOP + ItemStorage.Name(shopBest.Id) + " 威" + shopBest.Power : SUB_SHOP_NONE;
+                    else if (best.Src == SRC_SHOP) sub = own != null ? SUB_OWN + ItemStorage.Name(own.Id) + " 威" + own.Power + " × " + OwnedCount(own.Id) : SUB_NONE;
                 }
                 else
                 {
@@ -1613,34 +1662,37 @@ namespace RS2QoL.Patches
                     SpellCand pick = null;
                     foreach (SpellCand c in SpellCandidates(bit)) if (f >= 15 ? c.Rank == 0 : c.Id <= 230) { pick = c; break; }
                     if (pick == null) continue;
-                    string how = f >= 15 ? "研究所で覚える" : (f == 14 ? "研究所の完成を待つ" : "研究所を建てる");
-                    TblRow(t, cy, AttrLabel(bit) + TechName(pick.Id, -1, true) + " 威" + pick.Power, f >= 15 ? s_line : s_dim, -1, 0, -1, how);
+                    // 名前の後ろに (研究所 = 今覚えられる / 建設中 / 未建設 = 建つと覚えられる)。店・手持ちの列は出さない (ユーザー 2026-10-28)
+                    string how = f >= 15 ? "研究所" : (f == 14 ? "研究所 建設中" : "研究所 未建設");
+                    TblRow(t, cy, AttrLabel(bit) + TechName(pick.Id, -1, true) + " 威" + pick.Power + " (" + how + ")", f >= 15 ? s_line : s_dim, -1, -1);
                 }
                 DrawSegs(t.MidX, cy, t.MidW, lineH, EnemyMarks(r));
                 cy += lineH;
                 shown++;
+                // 店にしか無い時だけ、その行の下に「今持っている中では」を薄く 1 行 (ユーザー 2026-10-28)
+                if (sub != null) cy = DrawSubLine(cx, cy, cw, lineH, fontSize, sub);
             }
-            if (shown == 0 && cy + lineH <= tableBottom) { Txt(new Rect(cx, cy, cw, lineH), "○ 以上の属性に、手に入る武器も覚えられる術も無い", s_dim); cy += lineH; }
+            if (shown == 0) { Txt(new Rect(cx, cy, cw, lineH), "○ 以上の属性に、手に入る武器も覚えられる術も無い", s_dim); cy += lineH; }
             List<Enemy> none = NoWeakEnemies();
-            if (none.Count > 0 && cy + lineH <= tableBottom)
+            if (none.Count > 0)
             {
                 StringBuilder sb = new StringBuilder("弱点なし (全部 △ 以下): ");
                 for (int i = 0; i < none.Count; i++) sb.Append(i > 0 ? "・" : "").Append(none[i].Name);
                 Txt(new Rect(cx, cy, cw, lineH), sb.ToString(), s_dim);
                 cy += lineH;
             }
-            cy = TblTotal(t, Mathf.Max(cy + Mathf.Round(lineH * 0.5f), tableBottom), bottom);
+            cy = EndTable(t, cy, tableBottom, lineH);
             cy += Mathf.Round(lineH * 0.3f);
             float hintH = Mathf.Round(lineH * 0.9f);
-            cy = DrawWrapped(cx, cy, cw, hintH, "武器 = [ ] の属性で通常攻撃できるもの。足りなければ今行ける店で買える一番強いものを名前に出す。威 = 威力。", s_hint, bottom);
-            cy = DrawWrapped(cx, cy, cw, hintH, "術 = [ ] の属性の攻撃の術で、研究所で今覚えられる一番強いもの。手持ちは数えない。", s_hint, bottom);
-            cy = DrawWrapped(cx, cy, cw, hintH, "手持ち = 装備中 + 持ち物 + 倉庫 (パーティ " + members + " 人分を目安に)。◎ よく効く (弱点)  ○ 普通に効く", s_hint, bottom);
+            cy = DrawWrapped(cx, cy, cw, hintH, "武器 = [ ] の属性で通常攻撃できる、手に入る中で一番強いもの (手持ち + 倉庫 + 今行ける店)。威 = 威力。店 = 今行ける店で売っているか (○ / ×)。", s_hint, bottom);
+            cy = DrawWrapped(cx, cy, cw, hintH, "術 = [ ] の属性の攻撃の術で、研究所で今覚えられる一番強いもの (未建設 / 建設中なら建つと覚えられるもの)。手持ちは数えない。", s_hint, bottom);
+            cy = DrawWrapped(cx, cy, cw, hintH, "手持ち = その品の数 (装備中 + 持ち物 + 倉庫。パーティ " + members + " 人分を目安に)。店 × の行は 2 行目に今行ける店で買える一番強い物、手持ち 0 の行は今持っている中で一番強い物。◎ よく効く (弱点)  ○ 普通に効く", s_hint, bottom);
         }
 
         /// <summary>
         /// 装備のヒント (防具) のページ。敵が使った属性ごとに 1 行 (受けた HP のダメージの多い順)。名前 = 揃える防具 (足りていれば持っている中で
         /// その属性の防御力が一番高いもの、足りなければ今行ける店で買える一番高いもの。部位も出す)、手持ち = その属性の防御力が持っている中で一番高い値の
-        /// 半分以上のもの、受けた量 = 被ダメージと使った敵 (HP も LP も減らない技は技の名前)、買うなら。
+        /// その品の個数 (属性の合計ではない。ユーザー 2026-10-28)、受けた量 = 被ダメージと使った敵 (HP も LP も減らない技は技の名前)。
         /// (ユーザー 2026-10-25: 防具は武器と別のページに。部位ごとの表 (旧 5 ページ目) は無くす)
         /// </summary>
         private static void DrawArmorTablePage(float cx, float cy, float cw, float lineH, int fontSize, float bottom)
@@ -1650,39 +1702,43 @@ namespace RS2QoL.Patches
             Tbl t = MakeTbl(cx, cw, lineH, fontSize, 5.5f, 7.5f);   // 受けた量 / 誰から を別の列に (ユーザー 2026-10-25)
             List<AttrCol> used = UsedAttrs();
             List<ArmorCand> ac = ArmorCandidates();
-            float tableBottom = bottom - lineH * 4.6f;
-            TblHeader(t, cy, "防具", "受けた量", "誰から", "買うなら"); cy += lineH;
-            if (used.Count == 0 && cy + lineH <= tableBottom) { Txt(new Rect(cx, cy, cw, lineH), "敵の技の属性の記録がない", s_dim); cy += lineH; }
+            float tableBottom = bottom - lineH * 3.6f;
+            TblHeader(t, cy, "防具", "受けた量", "誰から"); cy += lineH;
+            cy = BeginTable(cy, tableBottom, lineH);
+            if (used.Count == 0) { Txt(new Rect(cx, cy, cw, lineH), "敵の技の属性の記録がない", s_dim); cy += lineH; }
             foreach (AttrCol a in used)
             {
-                if (cy + lineH > tableBottom) break;
                 int k = a.Index;
-                int top = 0;
-                foreach (KeyValuePair<int, int> kv in OwnedList(id => ArmorPart(id) >= 0 && ArmorDef(id, k) > 0)) { int v = ArmorDef(kv.Key, k); if (v > top) top = v; }
-                int floor = Mathf.Max(1, (top + 1) / 2);
-                int have = CountOf(OwnedList(id => ArmorPart(id) >= 0 && ArmorDef(id, k) >= floor));
-                int gap = Mathf.Max(0, members - have);
-                ArmorCand shop = null, own = null; int shopV = 0, ownV = 0;
+                // 名前 = 手に入る中でこの属性の防御力が一番高い防具 (部位は問わない。同じなら持っている方)。店 / 手持ち / 2 行目は武器のページと同じ
+                ArmorCand best = null, own = null, shopBest = null; int bestV = 0, ownV = 0, shopV = 0;
                 foreach (ArmorCand c in ac)
                 {
                     int v = ArmorDef(c.Id, k);
                     if (v <= 0) continue;
-                    if (c.InShop) { if (v > shopV) { shopV = v; shop = c; } }
-                    else if (v > ownV) { ownV = v; own = c; }
+                    bool owned = c.Src != SRC_SHOP;
+                    if (best == null || v > bestV || (v == bestV && owned && best.Src == SRC_SHOP)) { bestV = v; best = c; }
+                    if (owned && v > ownV) { ownV = v; own = c; }
+                    if (c.InShop && v > shopV) { shopV = v; shopBest = c; }
                 }
-                ArmorCand pick = gap > 0 && shop != null ? shop : (own ?? shop);
-                string name = "[" + TypeNames[k] + "]" + (pick != null ? ItemStorage.Name(pick.Id) + " (" + PartNames[pick.Part] + ") 防" + ArmorDef(pick.Id, k) : " 防ぐ防具が手に入らない");
-                TblRow(t, cy, name, pick != null ? s_line : s_dim, have, gap, shop != null ? shop.Id : -1, gap > 0 ? "店に無い" : null);
+                string name = "[" + TypeNames[k] + "]" + (best != null ? ItemStorage.Name(best.Id) + " (" + PartNames[best.Part] + ") 防" + bestV : " 防ぐ防具が手に入らない");
+                TblRow(t, cy, name, best != null ? s_line : s_dim, best == null ? -1 : (best.InShop ? 1 : 0), best != null ? OwnedCount(best.Id) : -1);
                 Txt(new Rect(t.MidX, cy, t.MidW, lineH), TakenText(a, true), s_dim);
-                Txt(new Rect(t.Mid2X, cy, t.Mid2W, lineH), string.Join("・", a.Enemies.ToArray()), s_dim);
-                cy += lineH;
+                // 誰から = 敵 1 体ずつ 1 行に (2〜3 体を「・」でつなぐと右にはみ出す。ユーザー 2026-10-28)。2 体目からは名前だけの行
+                for (int i = 0; i < a.Enemies.Count; i++)
+                {
+                    Txt(new Rect(t.Mid2X, cy, t.Mid2W, lineH), a.Enemies[i], s_dim);
+                    cy += lineH;
+                }
+                if (a.Enemies.Count == 0) cy += lineH;
+                if (best != null && !best.InShop) cy = DrawSubLine(cx, cy, cw, lineH, fontSize, shopBest != null ? SUB_SHOP + ItemStorage.Name(shopBest.Id) + " (" + PartNames[shopBest.Part] + ") 防" + shopV : SUB_SHOP_NONE);
+                else if (best != null && best.Src == SRC_SHOP) cy = DrawSubLine(cx, cy, cw, lineH, fontSize, own != null ? SUB_OWN + ItemStorage.Name(own.Id) + " (" + PartNames[own.Part] + ") 防" + ownV + " × " + OwnedCount(own.Id) : SUB_NONE);
             }
-            cy = TblTotal(t, Mathf.Max(cy + Mathf.Round(lineH * 0.5f), tableBottom), bottom);
+            cy = EndTable(t, cy, tableBottom, lineH);
             cy += Mathf.Round(lineH * 0.3f);
             float hintH = Mathf.Round(lineH * 0.9f);
-            cy = DrawWrapped(cx, cy, cw, hintH, "防具 = [ ] の属性の防御力 (防) が、持っている中で一番高い値の半分以上のもの (部位は問わない)。足りなければ今行ける店で買える一番高いものを名前に出す。", s_hint, bottom);
+            cy = DrawWrapped(cx, cy, cw, hintH, "防具 = [ ] の属性の防御力 (防) が手に入る中で一番高いもの (部位は問わない。手持ち + 倉庫 + 今行ける店)。店 = 今行ける店で売っているか (○ / ×)。", s_hint, bottom);
             cy = DrawWrapped(cx, cy, cw, hintH, "受けた量: 被 = 受けた HP のダメージの合計。HP の減らない技は技の名前。", s_hint, bottom);
-            cy = DrawWrapped(cx, cy, cw, hintH, "手持ち = 装備中 + 持ち物 + 倉庫 (パーティ " + members + " 人分を目安に)。", s_hint, bottom);
+            cy = DrawWrapped(cx, cy, cw, hintH, "手持ち = その品の数 (装備中 + 持ち物 + 倉庫。パーティ " + members + " 人分を目安に)。店 × の行は 2 行目に今行ける店で買える一番強い物、手持ち 0 の行は今持っている中で一番強い物。", s_hint, bottom);
         }
 
         private static Texture2D Solid(Color c)
