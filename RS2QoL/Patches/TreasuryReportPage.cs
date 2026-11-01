@@ -48,7 +48,9 @@ namespace RS2QoL.Patches
             int dev = ScriptReader.Flag(115), left = ScriptReader.NewFlag(56);
             string kind = (dev & 4) != 0 ? "武器" : (dev & 8) != 0 ? "防具" : null;
             // 残り 0 = 仕上がっている (開発所の script msg 2068 / 2069 は new_flag 56 == 0 で渡す。「まもなく完成」と出していたのは誤り、ユーザー 2026-10-24)
-            s_repDev = kind == null ? "開発なし" : left > 0 ? kind + "を開発中 (あと " + left + " 戦)" : kind + "が仕上がっています (開発所へ)";
+            // 右列の欄は見出しを除くと約 13 文字分。「〜が仕上がっています (開発所へ)」(約 16 文字分) は折り返して 2 行目が見切れた (ユーザー 2026-10-28) → 短く。
+            // それでも入らない時 (弔いの回数が付く等) は DrawReportCell が 1 行に収める
+            s_repDev = kind == null ? "開発なし" : left > 0 ? kind + "を開発中 (あと " + left + " 戦)" : kind + "が完成 (開発所へ)";
             int stock = 0;
             try { stock = MourningForge.Stock; } catch { }
             if (stock > 0) s_repDev += "・弔い " + stock + " 回";
@@ -202,7 +204,24 @@ namespace RS2QoL.Patches
         private static void DrawReportCell(float x, float y, float w, float labelW, float lineH, string label, string value)
         {
             UiParts.Label(new Rect(x, y, labelW, lineH), label, s_lineDim);
-            UiParts.Label(new Rect(x + labelW, y, w - labelW, lineH), value, s_line);
+            // 値は必ず 1 行に収める (GUI.skin.label は既定で折り返すので、欄より長いと 2 行目が行の高さからはみ出て見切れる。ユーザー 2026-10-28)。
+            // 入らない時は、まず見出しの直後まで左に詰め、それでも入らなければ文字を欄に入る大きさまで縮める
+            float vx = x + labelW, vw = w - labelW;
+            float need = s_line.CalcSize(new GUIContent(value)).x;
+            if (need > vw)
+            {
+                float lw = s_lineDim.CalcSize(new GUIContent(label)).x + Mathf.Round(s_line.fontSize * 0.5f);
+                if (lw < labelW) { vx = x + lw; vw = w - lw; }
+            }
+            if (need <= vw) { UiParts.Label(new Rect(vx, y, vw, lineH), value, s_line); return; }
+            int size = Mathf.Max(8, Mathf.FloorToInt(s_line.fontSize * vw / need));
+            if (s_lineFit == null || s_lineFit.font != s_line.font || s_lineFitBase != s_line.fontSize) { s_lineFit = new GUIStyle(s_line); s_lineFitBase = s_line.fontSize; }
+            s_lineFit.fontSize = size;
+            s_lineFit.wordWrap = false;
+            UiParts.Label(new Rect(vx, y, vw, lineH), value, s_lineFit);
         }
+
+        private static GUIStyle s_lineFit;                  // 欄に入らない値を縮めて出す用 (s_line の写し。大きさは呼ぶたびに決め直す)
+        private static int s_lineFitBase = -1;
     }
 }

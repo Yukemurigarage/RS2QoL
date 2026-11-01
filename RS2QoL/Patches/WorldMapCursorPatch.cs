@@ -38,8 +38,8 @@ namespace RS2QoL.Patches
         {
             Enabled = config.Bind("WorldMap", "FreeCursor", true,
                 "ワールドマップ (大陸の一覧・地域の地名一覧) のカーソルをスーファミ版のように十字キーで自由に動かす。場所の上に乗せた時だけ選べる (アイコンへの瞬間移動はしない)");
-            Speed = config.Bind("WorldMap", "CursorSpeed", 4,
-                new ConfigDescription("自由カーソルの速さ (実時間 33ms あたりのドット数。マップは 240 ドット幅。倍速中も同じ速さ)", new AcceptableValueRange<int>(SPEED_MIN, SPEED_MAX)));
+            Speed = config.Bind("WorldMap", "CursorSpeed", 3,
+                new ConfigDescription("自由カーソルの速さ (1 論理フレーム = 33ms あたりのドット数。マップは 240 ドット幅。倍速中はその分速く動く: 3 なら x2 で 6 相当)", new AcceptableValueRange<int>(SPEED_MIN, SPEED_MAX)));
         }
 
         public static bool On { get { return Enabled != null && Enabled.Value; } }
@@ -173,10 +173,9 @@ namespace RS2QoL.Patches
             if (QuitGame.BlockInput) return; // 終了ダイアログ中は羽 (カーソル) も動かさない
             int dirs = DiagonalInputPatch.LastRaw & DIR_MASK;
             if (dirs == 0) return;
-            float step = (WorldMapCursor.Speed != null ? WorldMapCursor.Speed.Value : 4) * 36f / 16f; // 論理ドット → 画面ドット
-            // ここは論理フレームごとに呼ばれるので、倍速 (x2 なら 1 Unity フレームに 2 回) だと羽もその分速くなる。
-            // 速さの設定は「実時間 33ms あたり」の意味にしたいので、1 回の歩幅を倍率で割って実時間の速さを保つ (x1.5 は 1, 2, 1, 2 回と回るが平均で合う)
-            step *= 100f / GameSpeed.EffectivePercent();
+            float step = (WorldMapCursor.Speed != null ? WorldMapCursor.Speed.Value : 3) * 36f / 16f; // 論理ドット → 画面ドット
+            // ここは論理フレームごとに呼ばれるので、倍速 (x2 なら 1 Unity フレームに 2 回) だと羽もその分速く動く (3 なら x2 で 6 相当)。
+            // 以前は倍率で割って実時間の速さを保っていたが、ゲームの速さに合わせて羽も速くする方がよいというユーザーの判断で外した (2026-11-01)
             if ((dirs & DiagonalInputPatch.DIR_LEFT) != 0) s_x -= step;
             if ((dirs & DiagonalInputPatch.DIR_RIGHT) != 0) s_x += step;
             if ((dirs & DiagonalInputPatch.DIR_UP) != 0) s_y -= step;

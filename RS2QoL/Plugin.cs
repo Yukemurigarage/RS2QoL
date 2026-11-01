@@ -110,6 +110,8 @@ namespace RS2QoL
             Patches.PauseHint.Bind(Config);
             // ワールドマップのカーソルを十字キーで自由に動かす ([WorldMap] FreeCursor / CursorSpeed)
             Patches.WorldMapCursor.Bind(Config);
+            // ワールドマップの大陸の一覧で、カーソルの乗っている大陸の名前を出す ([WorldMap] ContinentName、既定 On)
+            Patches.WorldMapContinentName.Bind(Config);
             // ワールドマップの巻物の開閉の速さを倍速でも同じに ([WorldMap] ScrollSpeedFixed、既定 On)
             Patches.WorldScrollSpeed.Bind(Config);
             // キーボードの割り当て ([KeyMap] 機能 → KeyCode、既定は本体と同じ)

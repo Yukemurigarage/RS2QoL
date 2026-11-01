@@ -30,7 +30,7 @@ namespace RS2QoL.Patches
     ///
     /// VSync モードは vSyncCount で Unity が垂直同期に合わせて待つ (60Hz→2、120Hz→4)。
     /// 144Hz のように 30 で割り切れない時は vSyncCount=1 + リミッタで平均 30fps にする (4 回と 5 回の垂直同期が混ざるので
-    /// 多少カクつく。そういうモニターは VRR が使えるはずなので VRR を勧める)。
+    /// 多少カクつく。ただしドライバー側の G-Sync / FreeSync が有効ならその垂直同期はフレームが出来た時点で来るので実質 VRR 動作になり、カクつかない (165Hz + G-Sync で確認)。ドライバーの VRR がこのゲームに掛からない時だけ VRR モードを使う)。
     /// Unity は vSyncCount が 0 以外だと targetFrameRate を無視するので、vSync 中は必ず自前のリミッタも併用する。
     /// </summary>
     internal static class DisplaySync
@@ -56,7 +56,7 @@ namespace RS2QoL.Patches
         public static void Bind(ConfigFile config)
         {
             Mode = config.Bind("Display", "Sync", DisplaySyncKind.VSync,
-                "画面の同期。VSync=固定リフレッシュ向け・既定 (モニターの Hz が 30 の整数倍なら垂直同期 2 回に 1 フレームで完全に 30fps、それ以外は VSync ON + リミッタ) / VRR=G-Sync・FreeSync 向け (VSync OFF + 正確な 30fps リミッタ。Windows の可変リフレッシュレートかドライバー側でウィンドウでも VRR を有効にしておく) / Unchanged=本体任せ (Unity の 30fps リミッタは間隔が 26〜40ms と暴れる)");
+                "画面の同期。VSync=垂直同期・既定 (モニターの Hz が 30 の整数倍なら垂直同期 2 回に 1 フレームで完全に 30fps、それ以外は VSync ON + リミッタ。ドライバー側の G-Sync / FreeSync が有効ならこのままで VRR も効く) / VRR=通常は不要 (VSync OFF + 正確な 30fps リミッタ。144 / 165Hz のモニターで VSync がカクつく時 = ドライバーの VRR がこのゲームに掛かっていない時だけ試す) / Unchanged=本体任せ (Unity の 30fps リミッタは間隔が 26〜40ms と暴れる。60fps 表示が Off 以外の時は本体の値では 60fps にならないので VSync と同じ動きになる)");
             FrameRate = config.Bind("Display", "FrameRate", 0,
                 new ConfigDescription("VRR / VSync の時の目標フレームレート。0=本体の値 (通常 30)。ゲームの進行速度はフレームレートに比例するので、速さを変えたい時は [Speed] を使う", new AcceptableValueRange<int>(0, 120)));
             Mode.SettingChanged += (s, e) => Apply();
@@ -67,7 +67,7 @@ namespace RS2QoL.Patches
         {
             switch (k)
             {
-                case DisplaySyncKind.VRR: return "VRR (G-Sync / FreeSync)";
+                case DisplaySyncKind.VRR: return "VRR (通常は不要)";
                 case DisplaySyncKind.VSync: return "垂直同期";
                 default: return "変更しない";
             }
@@ -106,10 +106,11 @@ namespace RS2QoL.Patches
             switch (mode)
             {
                 case DisplaySyncKind.VRR:
+                    s_appliedHz = Screen.currentResolution.refreshRate; // VRR 中もモニターの Hz の変化を監視してログに残す (OnFrameStart)
                     QualitySettings.vSyncCount = 0;
                     Application.targetFrameRate = -1;
                     s_limiterOn = true;
-                    Plugin.Log.LogInfo("[Display] VRR: vSyncCount=0 targetFrameRate=-1 limiter=" + fps + "fps (" + s_periodMs.ToString("F2") + "ms)");
+                    Plugin.Log.LogInfo("[Display] VRR: monitor " + s_appliedHz + "Hz, vSyncCount=0 targetFrameRate=-1 limiter=" + fps + "fps (" + s_periodMs.ToString("F2") + "ms)");
                     break;
                 case DisplaySyncKind.VSync:
                 {
@@ -124,7 +125,7 @@ namespace RS2QoL.Patches
                     Application.targetFrameRate = -1;
                     s_limiterOn = true;
                     if (multiple) Plugin.Log.LogInfo("[Display] VSync: " + hz + "Hz / " + fps + "fps -> vSyncCount=" + n + " + limiter");
-                    else Plugin.Log.LogWarning("[Display] VSync: " + hz + "Hz is not a multiple of " + fps + "fps -> vSyncCount=1 + limiter (uneven cadence; prefer VRR on this monitor)");
+                    else Plugin.Log.LogWarning("[Display] VSync: " + hz + "Hz is not a multiple of " + fps + "fps -> vSyncCount=1 + limiter (fine if G-Sync / FreeSync is enabled in the driver; if it stutters, try Sync=VRR)");
                     break;
                 }
                 default:
@@ -158,8 +159,8 @@ namespace RS2QoL.Patches
                 catch (Exception e) { s_gameStarted = true; Plugin.Log.LogWarning("[Display] " + e); }
             }
             if (s_limiterOn) Wait();
-            // VSync 中はモニターの Hz が変わったら (設定変更・別モニターへ移動) vSyncCount を取り直す
-            if ((Mode.Value == DisplaySyncKind.VSync || (Mode.Value == DisplaySyncKind.Unchanged && Interp60.DisplayMultiplier() > 1)) && Time.frameCount - s_hzCheckFrame >= 60)
+            // リミッタ中 (VRR / VSync) はモニターの Hz が変わったら (設定変更・別モニターへ移動) 再適用する。VSync は vSyncCount を取り直し、VRR はログに残すだけ
+            if (s_limiterOn && Time.frameCount - s_hzCheckFrame >= 60)
             {
                 s_hzCheckFrame = Time.frameCount;
                 if (Screen.currentResolution.refreshRate != s_appliedHz) { Plugin.Log.LogInfo("[Display] refresh rate changed " + s_appliedHz + " -> " + Screen.currentResolution.refreshRate); Apply(); }

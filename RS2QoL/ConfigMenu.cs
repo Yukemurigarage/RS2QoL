@@ -325,12 +325,24 @@ namespace RS2QoL
             p.Items.Add(new Item
             {
                 Quill = true,
-                Label = "の速さ (倍速でも同じ)",
+                Label = "の速さ (倍速ではその分速く)",
                 Value = () => WorldMapCursor.Speed.Value.ToString(),
                 Left = () => WorldMapCursor.CycleSpeed(-1),
                 Entry = WorldMapCursor.Speed,
                 Right = () => WorldMapCursor.CycleSpeed(+1),
                 Activate = () => WorldMapCursor.CycleSpeed(+1),
+            });
+            Item cname = AddToggle(p, "の乗っている大陸の名前を出す", WorldMapContinentName.Enabled);
+            if (cname != null) cname.Quill = true;
+            p.Items.Add(new Item
+            {
+                Quill = true,
+                Label = "の乗っている大陸の名前の大きさ (%)",
+                Value = () => WorldMapContinentName.SizePercent.Value.ToString(),
+                Left = () => WorldMapContinentName.CycleSize(-1),
+                Entry = WorldMapContinentName.SizePercent,
+                Right = () => WorldMapContinentName.CycleSize(+1),
+                Activate = () => WorldMapContinentName.CycleSize(+1),
             });
             AddToggle(p, "ワールドマップを開く / 閉じる巻物の速さを倍速でも同じに", WorldScrollSpeed.Enabled);
 
